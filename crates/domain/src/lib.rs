@@ -4,6 +4,9 @@
 //! Este crate NO debe depender de tokio, reqwest, serde_json ni de ningún otro crate de I/O.
 
 pub mod error;
+pub mod market;
+pub mod portfolio;
+pub mod risk;
 pub mod shared;
 pub mod trading;
 

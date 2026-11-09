@@ -5,7 +5,7 @@
 use rust_decimal::Decimal;
 use thiserror::Error;
 
-use crate::shared::{Currency, Quantity};
+use crate::shared::{Currency, Quantity, Symbol};
 use crate::trading::OrderStatus;
 
 /// Violación de una regla o invariante del dominio.
@@ -55,4 +55,25 @@ pub enum DomainError {
 
     #[error("instantánea de orden inconsistente: {0}")]
     InconsistentOrderSnapshot(&'static str),
+
+    #[error("no se pueden vender {requested} acciones: la posición solo tiene {available}")]
+    InsufficientPosition {
+        requested: Quantity,
+        available: Quantity,
+    },
+
+    #[error("datos de cuenta inválidos: {0}")]
+    InvalidAccount(&'static str),
+
+    #[error("vela inválida: {0}")]
+    InvalidBar(&'static str),
+
+    #[error("reloj de mercado inválido: {0}")]
+    InvalidMarketClock(&'static str),
+
+    #[error("límites de riesgo inválidos: {0}")]
+    InvalidRiskLimits(&'static str),
+
+    #[error("se esperaba el símbolo {expected} pero se recibió {actual}")]
+    SymbolMismatch { expected: Symbol, actual: Symbol },
 }

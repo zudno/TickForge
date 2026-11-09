@@ -1,0 +1,10 @@
+//! Subdominio de riesgo: validaciones pre-trade que toda orden debe superar,
+//! venga del usuario o de un modelo de ML.
+
+mod risk_limits;
+mod risk_policy;
+mod risk_violation;
+
+pub use risk_limits::RiskLimits;
+pub use risk_policy::{RiskAssessment, RiskContext, RiskPolicy};
+pub use risk_violation::RiskViolation;
