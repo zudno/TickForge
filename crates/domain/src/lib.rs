@@ -5,5 +5,6 @@
 
 pub mod error;
 pub mod shared;
+pub mod trading;
 
 pub use error::DomainError;

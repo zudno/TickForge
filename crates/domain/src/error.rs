@@ -5,7 +5,8 @@
 use rust_decimal::Decimal;
 use thiserror::Error;
 
-use crate::shared::Currency;
+use crate::shared::{Currency, Quantity};
+use crate::trading::OrderStatus;
 
 /// Violación de una regla o invariante del dominio.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -27,4 +28,31 @@ pub enum DomainError {
 
     #[error("desbordamiento aritmético en la operación '{0}'")]
     ArithmeticOverflow(&'static str),
+
+    #[error("la cantidad debe ser mayor que cero, se recibió {0}")]
+    NonPositiveQuantity(Decimal),
+
+    #[error("identificador de orden inválido: '{0}'")]
+    InvalidOrderId(String),
+
+    #[error("identificador de cliente inválido: '{0}'")]
+    InvalidClientOrderId(String),
+
+    #[error("identificador de ejecución inválido: '{0}'")]
+    InvalidFillId(String),
+
+    #[error("el precio {price} no respeta el incremento mínimo de {tick}")]
+    InvalidTickSize { price: Decimal, tick: Decimal },
+
+    #[error("transición de estado inválida: {from} -> {to}")]
+    InvalidStatusTransition { from: OrderStatus, to: OrderStatus },
+
+    #[error("una orden en estado {0} no admite ejecuciones")]
+    FillNotAllowed(OrderStatus),
+
+    #[error("la ejecución de {fill} excede la cantidad pendiente de {remaining}")]
+    Overfill { fill: Quantity, remaining: Quantity },
+
+    #[error("instantánea de orden inconsistente: {0}")]
+    InconsistentOrderSnapshot(&'static str),
 }
