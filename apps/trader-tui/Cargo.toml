@@ -14,7 +14,14 @@ path = "src/main.rs"
 tickforge-domain.workspace = true
 tickforge-application.workspace = true
 tickforge-presentation-tui.workspace = true
-tickforge-adapter-paper-sim.workspace = true
+tickforge-adapter-alpaca.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+chrono.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
 
 [lints]
 workspace = true

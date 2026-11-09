@@ -9,6 +9,19 @@ publish.workspace = true
 [dependencies]
 tickforge-domain.workspace = true
 tickforge-application.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }
+futures.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+rust_decimal.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+rust_decimal_macros.workspace = true
 
 [lints]
 workspace = true

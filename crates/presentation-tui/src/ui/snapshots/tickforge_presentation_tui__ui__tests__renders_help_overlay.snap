@@ -1,0 +1,20 @@
+---
+source: crates/presentation-tui/src/ui/tests.rs
+expression: draw(&state)
+---
+┌ TickForge ─ Alpaca ────────────────────────────────────────────────────────────────────────────────────────┐
+│Equity 101,250.75 │ Efectivo 99,355.75 │ Poder de compra 99,355.75 │ P&L día +1,250.75 (+1.25%)             │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Watchlist ─────────────────┌ Atajos de teclado ───────────────────────────────┐(1) ────────────────────────┐
+│Símbolo     Último   Cambio │       j / ↓  Siguiente símbolo                   │Cant.   Promedio         P&L│
+│AAPL        189.11   +1.13% │       k / ↑  Símbolo anterior                    │   10     185.00      +41.10│
+│SPY         512.40        — │           r  Actualizar cuenta y reconectar datos│                            │
+│                            │           ?  Mostrar u ocultar esta ayuda        │                            │
+│                            │         Esc  Cerrar ventana                      │                            │
+│                            │  q / Ctrl+C  Salir                               │                            │
+│                            │                                                  │                            │
+│                            │Próximamente: comprar y vender desde aquí         │                            │
+│                            └──────────────────────────────────────────────────┘                            │
+│                                                                  ││                                        │
+└──────────────────────────────────────────────────────────────────┘└────────────────────────────────────────┘
+ PAPER  Mercado ABIERTO · cierra en 6h 00m │ ● En vivo │ 10:00:00 ET │ Datos en tiempo real  ? ayuda  q salir

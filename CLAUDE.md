@@ -56,6 +56,10 @@ Workspace de Cargo con un crate por capa. El compilador hace cumplir las depende
 - Logging con `tracing`, siempre a archivo: la TUI ocupa stdout. Nunca `println!` en librerías.
 - Funciones de dominio puras y deterministas; el tiempo se inyecta mediante el puerto `Clock`.
 - Un tipo principal por archivo, nombrado en `snake_case` igual que el tipo (`order_status.rs` → `OrderStatus`).
+- **Mostrar decimales**: `format!("{:.2}", decimal)` **trunca** en `rust_decimal`. Redondear siempre
+  antes de formatear; en la TUI usar las funciones de `crates/presentation-tui/src/format.rs`.
+- TUI: el estado solo cambia en el reducer (`state/reducer.rs`); el render no tiene estado propio
+  y la red nunca se llama desde el bucle de dibujo (se piden `Command`).
 
 ## Pruebas
 
@@ -96,4 +100,6 @@ también (si una licencia nueva es necesaria, agregarla a `deny.toml` con justif
 ## Entorno
 
 - Windows 11, toolchain fijado en `rust-toolchain.toml` (1.94.0, edición 2024, resolver 3).
+- MSRV (`rust-version` del workspace): 1.88. Con `resolver = "3"` Cargo elige versiones compatibles
+  con el MSRV declarado; si una corrección de seguridad exige un Rust más nuevo, hay que subirlo.
 - La carpeta `ml/` (Python) queda fuera del workspace de Rust.
