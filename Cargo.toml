@@ -31,9 +31,14 @@ thiserror = "2"
 # Sin la feature `clock`: el dominio no puede leer la hora del sistema, se le inyecta
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 
+# Aplicación (puertos asíncronos)
+async-trait = "0.1"
+futures = "0.3"
+
 # Pruebas
 rust_decimal_macros = "1"
 proptest = "1"
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

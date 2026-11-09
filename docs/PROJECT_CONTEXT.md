@@ -73,7 +73,7 @@ IEX Cloud cerró en 2024: no usar.
 |---|---|---|
 | 0. Fundamentos | Workspace, CI (`fmt`, `clippy -D warnings`, `test`, `cargo-deny`), configuración, logging a archivo | Esqueleto que compila ✅ (workspace + CI; logging pasa a la fase 4) |
 | 1. Dominio | `Order`, `Position`, `Quote`, `Money`, `Price`, `Quantity`, máquina de estados de órdenes. Sin I/O | Dominio con pruebas unitarias y de propiedades ✅ |
-| 2. Aplicación | Puertos (traits) y casos de uso, probados con mocks y el broker simulado | Casos de uso probados sin red |
+| 2. Aplicación | Puertos (traits) y casos de uso, probados con mocks y el broker simulado | Casos de uso probados sin red ✅ |
 | 3. Adaptador Alpaca | REST (cuenta, posiciones, órdenes), WebSocket de datos y `trade_updates`, mapeo wire ⇄ dominio | Integración con paper trading |
 | 4. TUI básica | Bucle de eventos, layout, watchlist en vivo, barra de estado | Pantalla funcional |
 | 5. Órdenes | Ticket, vista previa, modal de confirmación, riesgo pre-trade, cancelación | Comprar/vender en paper |
@@ -311,7 +311,17 @@ pub trait SignalGenerator: Send + Sync {
 - [x] `market/`: `Quote`, `TradeTick`, `Bar` (+ `Ohlc`), `Timeframe`, `MarketClock`.
 - [x] `risk/`: `RiskLimits`, `RiskPolicy` (+ `RiskContext`, `RiskAssessment`), `RiskViolation`.
 
-**Fase 1 completa.** Siguiente: fase 2, puertos y casos de uso en `crates/application`.
+**Fase 1 completa.**
+
+### Fase 2 — Aplicación
+
+- [x] Puertos: `BrokerGateway` (+ `OrderUpdate`), `MarketDataFeed` (+ `MarketEvent`), `OrderJournal`, `Clock`, `ClientOrderIdGenerator`, `EventPublisher`.
+- [x] Casos de uso: `PlaceOrderUseCase`, `CancelOrderUseCase`, `GetPortfolioSnapshotUseCase`.
+- [x] Simulador en memoria (`broker-paper-sim`): `PaperBroker`, `ManualClock`, `InMemoryOrderJournal`, `RecordingEventPublisher`, `SequentialClientOrderIdGenerator`.
+- [x] Pruebas de integración de los casos de uso contra el simulador.
+- [ ] Pendientes para fases posteriores: `WatchlistRepository` (fase 6), `SignalGenerator` (fase 9), reintentos con backoff (fase 7).
+
+**Fase 2 completa.** Siguiente: fase 3, adaptador de Alpaca (paper trading).
 
 ## 9. Decisiones de modelado del dominio
 
@@ -367,3 +377,18 @@ pub trait SignalGenerator: Send + Sync {
 | Precio de referencia | El límite si existe; si no, el precio ejecutable (`ask`/`bid`). Una orden a mercado sin precio ejecutable se bloquea. |
 | Fat-finger | Desviación del precio límite respecto al precio ejecutable, en ambas direcciones. |
 | Límites | `RiskLimits` valida que todos sean positivos; se cargarán desde la configuración. |
+
+## 10. Decisiones de la capa de aplicación
+
+| Concepto | Decisión |
+|---|---|
+| Puertos asíncronos | `async-trait` para poder usar `Arc<dyn Trait>` (los `async fn` nativos en traits aún no son compatibles con `dyn`). `Clock`, `ClientOrderIdGenerator` y `EventPublisher` son síncronos. |
+| `TradingPorts` | Agrupa los puertos que comparten los casos de uso de trading; evita constructores largos y deja la elección de implementaciones al composition root. |
+| Flujo de `PlaceOrderUseCase` | id de cliente → `OrderRequest` → cuenta, posición y cotización en paralelo (`try_join!`) → `RiskPolicy` → diario `Intent` → broker → diario `Submitted` → evento `OrderSubmitted`. |
+| Diario estricto antes de enviar | Si no se puede registrar la intención, **no se envía** la orden. |
+| Diario tolerante después de enviar | Si el broker ya aceptó la orden y el diario falla, se devuelve la orden y se publica `JournalWriteFailed`: ocultar una orden viva sería peor. La reconciliación (fase 6) corrige el diario. |
+| Cancelación | `CancelOrderUseCase` consulta la orden y deja que el agregado (`Order::request_cancel`) decida si es cancelable antes de llamar al broker. |
+| `OrderUpdate::apply_to` | Traduce cada actualización del broker al comando del agregado; con esto la TUI mantiene su copia de las órdenes solo a partir del flujo de eventos. |
+| `ClientOrderIdGenerator` falible | Devuelve `Result` para que ninguna implementación necesite `unwrap` al validar el formato. |
+| Simulador (`PaperBroker`) | Cuenta de efectivo sin margen, solo largos. Órdenes a mercado se llenan al `ask`/`bid`; límites cuando la cotización las vuelve ejecutables, al precio de mercado. Llenados siempre totales. Idempotente por `ClientOrderId`. `fail_next_submit` simula caídas. |
+| Pruebas de casos de uso | En `crates/application/tests/` contra el simulador (dependencia solo de desarrollo). Las utilidades de `tests/common/` permiten `unwrap` explícitamente porque clippy no las reconoce como pruebas. |

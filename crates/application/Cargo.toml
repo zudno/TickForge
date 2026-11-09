@@ -8,6 +8,17 @@ publish.workspace = true
 
 [dependencies]
 tickforge-domain.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Las pruebas de integración de los casos de uso usan el broker simulado en memoria
+tickforge-adapter-paper-sim.workspace = true
+tokio.workspace = true
+rust_decimal.workspace = true
+rust_decimal_macros.workspace = true
 
 [lints]
 workspace = true
