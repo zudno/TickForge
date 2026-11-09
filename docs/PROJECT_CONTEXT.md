@@ -71,7 +71,7 @@ IEX Cloud cerró en 2024: no usar.
 
 | Fase | Objetivo | Entregable |
 |---|---|---|
-| 0. Fundamentos | Workspace, CI (`fmt`, `clippy -D warnings`, `test`, `cargo-deny`), configuración, logging a archivo | Esqueleto que compila ✅ (workspace creado) |
+| 0. Fundamentos | Workspace, CI (`fmt`, `clippy -D warnings`, `test`, `cargo-deny`), configuración, logging a archivo | Esqueleto que compila ✅ (workspace + CI; logging pasa a la fase 4) |
 | 1. Dominio | `Order`, `Position`, `Quote`, `Money`, `Price`, `Quantity`, máquina de estados de órdenes. Sin I/O | Dominio con pruebas unitarias y de propiedades |
 | 2. Aplicación | Puertos (traits) y casos de uso, probados con mocks y el broker simulado | Casos de uso probados sin red |
 | 3. Adaptador Alpaca | REST (cuenta, posiciones, órdenes), WebSocket de datos y `trade_updates`, mapeo wire ⇄ dominio | Integración con paper trading |
@@ -162,14 +162,15 @@ tickforge/
 ├── Cargo.toml                         # workspace virtual (resolver = "3", edición 2024)
 ├── rust-toolchain.toml
 ├── clippy.toml / rustfmt.toml
-├── deny.toml                          # pendiente: cargo-deny
+├── deny.toml                          # auditoría de dependencias (cargo-deny)
+├── .gitattributes                     # saltos de línea LF
 ├── .env.example
 ├── CLAUDE.md
 ├── config/ (default.toml, paper.toml, live.toml)
 ├── docs/
 │   ├── PROJECT_CONTEXT.md
 │   └── adr/
-├── .github/workflows/ci.yml           # pendiente
+├── .github/workflows/ci.yml           # fmt, clippy, test (Linux + Windows), cargo-deny
 ├── apps/
 │   └── trader-tui/src/
 │       ├── main.rs
@@ -294,6 +295,10 @@ pub trait SignalGenerator: Send + Sync {
 - [x] Crates base: `domain`, `application`, `presentation-tui`, `broker-paper-sim`, binario `tickforge`.
 - [x] Lints del workspace (`unsafe_code = "forbid"`, clippy contra `unwrap`/`expect`/`panic`/aritmética flotante).
 - [x] `.gitignore`, `.env.example`, `CLAUDE.md`, este documento.
-- [ ] CI en GitHub Actions + `cargo-deny`.
-- [ ] Crate `telemetry` y logging a archivo.
+- [x] Repositorio público en GitHub: https://github.com/zudno/tickforge
+- [x] `.gitattributes` (saltos de línea LF en todo el repositorio).
+- [x] `deny.toml` (licencias permisivas, vulnerabilidades, solo crates.io).
+- [x] CI en GitHub Actions: `fmt`, `clippy -D warnings` y `test` en Linux y Windows, más `cargo-deny`.
+- [ ] Crate `telemetry` y logging a archivo (se hará junto con la TUI, fase 4).
+- [ ] Elegir licencia del proyecto (el repo es público y aún no tiene `LICENSE`).
 - [ ] Fase 1: modelado del dominio.

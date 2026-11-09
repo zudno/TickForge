@@ -1,0 +1,48 @@
+# Configuración de cargo-deny: auditoría de dependencias del workspace.
+# Ejecutar localmente con: cargo deny check
+
+[graph]
+all-features = true
+
+# Vulnerabilidades y crates sin mantenimiento (base de datos RustSec)
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+# Solo se permiten licencias permisivas compatibles con cualquier uso del proyecto
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# La lista es una política: no avisar si alguna licencia permitida aún no aparece en el árbol
+unused-allowed-license = "allow"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+
+# Los crates internos no se publican, así que no requieren licencia declarada
+[licenses.private]
+ignore = true
+
+[bans]
+# Versiones duplicadas de un mismo crate: avisar, no bloquear
+multiple-versions = "warn"
+# Prohibido `version = "*"`; se permiten dependencias por ruta entre crates internos
+wildcards = "deny"
+allow-wildcard-paths = true
+
+# Solo se aceptan dependencias de crates.io
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
