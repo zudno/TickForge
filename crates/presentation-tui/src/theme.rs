@@ -40,6 +40,14 @@ pub fn live_badge() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+/// Color del lado de una orden: verde compra, rojo vende.
+pub fn side(side: tickforge_domain::trading::OrderSide) -> Style {
+    match side {
+        tickforge_domain::trading::OrderSide::Buy => Style::new().fg(POSITIVE),
+        tickforge_domain::trading::OrderSide::Sell => Style::new().fg(NEGATIVE),
+    }
+}
+
 /// Color según el signo de un cambio (verde sube, rojo baja).
 pub fn signed(is_positive: bool, is_negative: bool) -> Style {
     if is_positive {

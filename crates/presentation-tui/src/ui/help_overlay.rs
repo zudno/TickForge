@@ -1,29 +1,25 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Flex, Layout};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::theme;
+use crate::ui::modal;
 
-const SHORTCUTS: [(&str, &str); 6] = [
-    ("j / ↓", "Siguiente símbolo"),
-    ("k / ↑", "Símbolo anterior"),
-    ("r", "Actualizar cuenta y reconectar datos"),
+const SHORTCUTS: [(&str, &str); 10] = [
+    ("j / ↓", "Bajar en el panel activo"),
+    ("k / ↑", "Subir en el panel activo"),
+    ("Tab", "Cambiar entre watchlist y órdenes"),
+    ("b", "Comprar el símbolo seleccionado"),
+    ("s", "Vender el símbolo seleccionado"),
+    ("c", "Cancelar la orden seleccionada"),
+    ("r", "Actualizar y reconectar"),
     ("?", "Mostrar u ocultar esta ayuda"),
-    ("Esc", "Cerrar ventana"),
+    ("Esc", "Cerrar o volver"),
     ("q / Ctrl+C", "Salir"),
 ];
 
 /// Ventana centrada con los atajos de teclado.
 pub(super) fn render(frame: &mut Frame) {
-    let height = u16::try_from(SHORTCUTS.len()).unwrap_or(u16::MAX) + 4;
-    let [area] = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .areas(frame.area());
-    let [area] = Layout::horizontal([Constraint::Length(52)])
-        .flex(Flex::Center)
-        .areas(area);
-
     let mut lines: Vec<Line> = SHORTCUTS
         .iter()
         .map(|(keys, description)| {
@@ -35,10 +31,11 @@ pub(super) fn render(frame: &mut Frame) {
         .collect();
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
-        "Próximamente: comprar y vender desde aquí",
+        "Toda orden muestra su costo y pasa la política de riesgo antes de enviarse",
         theme::muted(),
     )));
 
+    let area = modal::centered(frame.area(), 80, modal::height_for(lines.len()));
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines)

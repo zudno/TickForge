@@ -74,6 +74,9 @@ Workspace de Cargo con un crate por capa. El compilador hace cumplir las depende
 - Pruebas contra servicios reales (por ejemplo `paper_smoke`): siempre `#[ignore]`, solo lectura,
   con salvaguarda de entorno paper. Se ejecutan a mano:
   `cargo test -p tickforge-adapter-alpaca --test paper_smoke -- --ignored --nocapture`.
+- Única excepción de escritura: `paper_orders_smoke` coloca una compra límite de 1 acción muy
+  por debajo del mercado y la cancela de inmediato, solo en paper. Cualquier prueba nueva que
+  escriba en la cuenta debe seguir esas mismas garantías (no ejecutable, cancelada, paper).
 
 ## Comandos
 

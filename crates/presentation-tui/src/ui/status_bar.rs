@@ -18,7 +18,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut spans = vec![mode_badge(state.mode), Span::raw(" ")];
     spans.extend(market_session(state));
     spans.push(separator());
-    spans.push(stream_status(&state.stream_status));
+    spans.push(connections(state));
     spans.push(separator());
     spans.push(Span::raw(format::new_york_time(state.now)));
     if let Some(notification) = state.notifications.latest() {
@@ -69,13 +69,20 @@ fn market_session(state: &AppState) -> Vec<Span<'static>> {
     }
 }
 
-fn stream_status(status: &StreamStatus) -> Span<'static> {
-    match status {
-        StreamStatus::Connecting => Span::styled("○ Conectando…", theme::muted()),
-        StreamStatus::Live => Span::styled("● En vivo", Style::new().fg(theme::POSITIVE)),
-        StreamStatus::Disconnected(_) => {
+/// Estado combinado de las dos conexiones en tiempo real (datos y órdenes): se muestra el
+/// problema más importante, o "En vivo" si ambas funcionan.
+fn connections(state: &AppState) -> Span<'static> {
+    match (&state.stream_status, &state.order_stream_status) {
+        (StreamStatus::Disconnected(_), _) => {
             Span::styled("✕ Sin datos en vivo", Style::new().fg(theme::NEGATIVE))
         }
+        (_, StreamStatus::Disconnected(_)) => {
+            Span::styled("✕ Órdenes sin conexión", Style::new().fg(theme::NEGATIVE))
+        }
+        (StreamStatus::Live, StreamStatus::Live) => {
+            Span::styled("● En vivo", Style::new().fg(theme::POSITIVE))
+        }
+        _ => Span::styled("○ Conectando…", theme::muted()),
     }
 }
 

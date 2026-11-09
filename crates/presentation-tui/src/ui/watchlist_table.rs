@@ -1,8 +1,8 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Rect};
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Row, Table, TableState};
+use ratatui::text::Line;
+use ratatui::widgets::{Cell, Row, Table, TableState};
 use rust_decimal::Decimal;
 
 use crate::format;
@@ -35,7 +35,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::bordered().title(Span::styled(" Watchlist ", theme::title())))
+        .block(crate::ui::panel_block(
+            " Watchlist ",
+            state.focus == crate::state::Panel::Watchlist,
+        ))
         .row_highlight_style(theme::selected_row())
         .column_spacing(1);
 

@@ -1,5 +1,8 @@
-use tickforge_domain::risk::{RiskContext, RiskPolicy};
-use tickforge_domain::shared::{Quantity, Symbol};
+use chrono::{DateTime, Utc};
+use tickforge_domain::market::Quote;
+use tickforge_domain::portfolio::{Account, Position};
+use tickforge_domain::risk::{RiskAssessment, RiskContext, RiskPolicy};
+use tickforge_domain::shared::{Money, Price, Quantity, Symbol};
 use tickforge_domain::trading::{Order, OrderRequest, OrderSide, OrderType, TimeInForce};
 
 use crate::error::ApplicationError;
@@ -18,9 +21,34 @@ pub struct PlaceOrderCommand {
     pub time_in_force: TimeInForce,
 }
 
+/// Resultado de evaluar una orden **sin enviarla**: lo que el usuario confirma.
+///
+/// Contiene la solicitud ya construida (con su `ClientOrderId`): al confirmar se envía
+/// exactamente esa solicitud, así que confirmar dos veces nunca duplica la orden.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderPreview {
+    pub request: OrderRequest,
+    /// Precio usado para estimar el costo: el límite, o el ask/bid actual a mercado.
+    pub reference_price: Option<Price>,
+    pub estimated_notional: Option<Money>,
+    pub buying_power: Money,
+    /// Cantidad que ya se tiene del símbolo (para mostrar el efecto de la orden).
+    pub position_quantity: Quantity,
+    pub assessment: RiskAssessment,
+}
+
+/// Contexto que la política de riesgo necesita, consultado en el momento.
+struct RiskInputs {
+    account: Account,
+    position: Option<Position>,
+    quote: Quote,
+    now: DateTime<Utc>,
+}
+
 /// Caso de uso: colocar una orden aplicando la política de riesgo.
 ///
-/// Es la **única** ruta por la que una orden llega al broker.
+/// Es la **única** ruta por la que una orden llega al broker. Ofrece dos pasos para la TUI
+/// (`preview` y `submit`) y uno directo (`execute`) para el futuro motor de decisiones.
 pub struct PlaceOrderUseCase {
     ports: TradingPorts,
     risk_policy: RiskPolicy,
@@ -31,47 +59,43 @@ impl PlaceOrderUseCase {
         Self { ports, risk_policy }
     }
 
-    pub async fn execute(&self, command: PlaceOrderCommand) -> Result<Order, ApplicationError> {
+    /// Construye la solicitud y la evalúa contra la política de riesgo, sin enviarla.
+    pub async fn preview(
+        &self,
+        command: PlaceOrderCommand,
+    ) -> Result<OrderPreview, ApplicationError> {
+        let request = self.build_request(command)?;
+        let inputs = self.gather_inputs(&request).await?;
+        let assessment = self.evaluate(&request, &inputs)?;
+
+        let market_price = inputs.quote.executable_price(request.side());
+        let reference_price = request.order_type().limit_price().or(market_price);
+        let estimated_notional = reference_price
+            .map(|price| request.estimated_notional(price))
+            .transpose()?;
+
+        Ok(OrderPreview {
+            reference_price,
+            estimated_notional,
+            buying_power: inputs.account.buying_power(),
+            position_quantity: inputs
+                .position
+                .as_ref()
+                .map_or(Quantity::ZERO, Position::quantity),
+            assessment,
+            request,
+        })
+    }
+
+    /// Envía una solicitud ya construida (normalmente la de un `OrderPreview` confirmado).
+    ///
+    /// La política de riesgo se vuelve a evaluar con datos frescos: entre la vista previa y
+    /// la confirmación el precio o el saldo pueden haber cambiado.
+    pub async fn submit(&self, request: OrderRequest) -> Result<Order, ApplicationError> {
         let ports = &self.ports;
 
-        // 1. Construir la solicitud validada por el dominio
-        let request = OrderRequest::new(
-            ports.client_order_ids.next_id()?,
-            command.symbol,
-            command.side,
-            command.order_type,
-            command.quantity,
-            command.time_in_force,
-        )?;
-
-        // 2. Reunir el contexto de riesgo en paralelo
-        let (account, position, quote) = futures::try_join!(
-            async { ports.broker.account().await.map_err(ApplicationError::from) },
-            async {
-                ports
-                    .broker
-                    .position(request.symbol())
-                    .await
-                    .map_err(ApplicationError::from)
-            },
-            async {
-                ports
-                    .market_data
-                    .latest_quote(request.symbol())
-                    .await
-                    .map_err(ApplicationError::from)
-            },
-        )?;
-
-        // 3. Validación pre-trade: si falla, la orden nunca sale del sistema
-        let now = ports.clock.now();
-        let assessment = self.risk_policy.evaluate(&RiskContext {
-            request: &request,
-            account: &account,
-            position: position.as_ref(),
-            quote: &quote,
-            now,
-        })?;
+        let inputs = self.gather_inputs(&request).await?;
+        let assessment = self.evaluate(&request, &inputs)?;
 
         if !assessment.is_approved() {
             let violations = assessment.into_violations();
@@ -80,7 +104,7 @@ impl PlaceOrderUseCase {
                     JournalEntry::RiskRejected {
                         request: request.clone(),
                         violations: violations.clone(),
-                        at: now,
+                        at: inputs.now,
                     },
                     request.client_order_id(),
                 )
@@ -92,16 +116,15 @@ impl PlaceOrderUseCase {
             return Err(ApplicationError::RiskRejected(violations));
         }
 
-        // 4. Registrar la intención ANTES de enviar: sin auditoría no se envía nada
+        // Registrar la intención ANTES de enviar: sin auditoría no se envía nada
         ports
             .journal
             .append(JournalEntry::Intent {
                 request: request.clone(),
-                at: now,
+                at: inputs.now,
             })
             .await?;
 
-        // 5. Enviar al broker
         let order = match ports.broker.submit_order(&request).await {
             Ok(order) => order,
             Err(error) => {
@@ -123,7 +146,7 @@ impl PlaceOrderUseCase {
             }
         };
 
-        // 6. La orden ya está viva: un fallo del diario no debe ocultarlo al usuario
+        // La orden ya está viva: un fallo del diario no debe ocultarlo al usuario
         ports
             .append_best_effort(
                 JournalEntry::Submitted {
@@ -138,5 +161,64 @@ impl PlaceOrderUseCase {
             .publish(ApplicationEvent::OrderSubmitted(order.clone()));
 
         Ok(order)
+    }
+
+    /// Construye y envía en un solo paso (sin confirmación humana).
+    pub async fn execute(&self, command: PlaceOrderCommand) -> Result<Order, ApplicationError> {
+        let request = self.build_request(command)?;
+        self.submit(request).await
+    }
+
+    fn build_request(&self, command: PlaceOrderCommand) -> Result<OrderRequest, ApplicationError> {
+        Ok(OrderRequest::new(
+            self.ports.client_order_ids.next_id()?,
+            command.symbol,
+            command.side,
+            command.order_type,
+            command.quantity,
+            command.time_in_force,
+        )?)
+    }
+
+    /// Cuenta, posición y cotización, consultadas en paralelo.
+    async fn gather_inputs(&self, request: &OrderRequest) -> Result<RiskInputs, ApplicationError> {
+        let ports = &self.ports;
+        let (account, position, quote) = futures::try_join!(
+            async { ports.broker.account().await.map_err(ApplicationError::from) },
+            async {
+                ports
+                    .broker
+                    .position(request.symbol())
+                    .await
+                    .map_err(ApplicationError::from)
+            },
+            async {
+                ports
+                    .market_data
+                    .latest_quote(request.symbol())
+                    .await
+                    .map_err(ApplicationError::from)
+            },
+        )?;
+        Ok(RiskInputs {
+            account,
+            position,
+            quote,
+            now: ports.clock.now(),
+        })
+    }
+
+    fn evaluate(
+        &self,
+        request: &OrderRequest,
+        inputs: &RiskInputs,
+    ) -> Result<RiskAssessment, ApplicationError> {
+        Ok(self.risk_policy.evaluate(&RiskContext {
+            request,
+            account: &inputs.account,
+            position: inputs.position.as_ref(),
+            quote: &inputs.quote,
+            now: inputs.now,
+        })?)
     }
 }

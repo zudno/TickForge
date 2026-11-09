@@ -9,6 +9,7 @@ mod app;
 mod command;
 mod format;
 mod keymap;
+mod labels;
 mod state;
 mod theme;
 mod ui;

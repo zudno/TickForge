@@ -9,10 +9,16 @@ use tickforge_adapter_alpaca::{
 use tickforge_application::ports::{BrokerGateway, Clock, MarketDataFeed};
 use tickforge_application::use_cases::market::{GetMarketClockUseCase, WatchMarketUseCase};
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
+use tickforge_application::use_cases::trading::{
+    CancelOrderUseCase, PlaceOrderUseCase, TradingPorts, WatchOrderUpdatesUseCase,
+};
+use tickforge_domain::risk::RiskPolicy;
 use tickforge_presentation_tui::{TuiConfig, TuiServices};
 
+use crate::infrastructure::{
+    SystemClock, TimestampClientOrderIdGenerator, TracingEventPublisher, TracingOrderJournal,
+};
 use crate::settings::Settings;
-use crate::system_clock::SystemClock;
 
 pub fn build(settings: &Settings) -> anyhow::Result<(TuiServices, TuiConfig)> {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
@@ -32,10 +38,25 @@ pub fn build(settings: &Settings) -> anyhow::Result<(TuiServices, TuiConfig)> {
             .context("no se pudo configurar los datos de mercado de Alpaca")?,
     );
 
+    let trading_ports = TradingPorts {
+        broker: Arc::clone(&broker),
+        market_data: Arc::clone(&market_data),
+        journal: Arc::new(TracingOrderJournal),
+        events: Arc::new(TracingEventPublisher),
+        clock: Arc::clone(&clock),
+        client_order_ids: Arc::new(TimestampClientOrderIdGenerator::new(Arc::clone(&clock))),
+    };
+
     let services = TuiServices {
         portfolio: Arc::new(GetPortfolioSnapshotUseCase::new(Arc::clone(&broker))),
         watch_market: Arc::new(WatchMarketUseCase::new(market_data, Arc::clone(&clock))),
-        market_clock: Arc::new(GetMarketClockUseCase::new(broker)),
+        market_clock: Arc::new(GetMarketClockUseCase::new(Arc::clone(&broker))),
+        place_order: Arc::new(PlaceOrderUseCase::new(
+            trading_ports.clone(),
+            RiskPolicy::new(settings.risk_limits),
+        )),
+        cancel_order: Arc::new(CancelOrderUseCase::new(trading_ports)),
+        order_updates: Arc::new(WatchOrderUpdatesUseCase::new(broker)),
         clock,
     };
     let config = TuiConfig {
