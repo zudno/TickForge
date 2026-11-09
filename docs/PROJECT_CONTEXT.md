@@ -301,4 +301,25 @@ pub trait SignalGenerator: Send + Sync {
 - [x] CI en GitHub Actions: `fmt`, `clippy -D warnings` y `test` en Linux y Windows, más `cargo-deny`.
 - [ ] Crate `telemetry` y logging a archivo (se hará junto con la TUI, fase 4).
 - [ ] Elegir licencia del proyecto (el repo es público y aún no tiene `LICENSE`).
+
+### Fase 1 — Dominio
+
+- [x] `DomainError` (`thiserror`, mensajes en español).
+- [x] Value objects de `shared/`: `Symbol`, `Price`, `Quantity`, `Money` + `Currency`.
+- [ ] `trading/`: enums de orden, `OrderStatus` (máquina de estados), ids, `OrderRequest`, `Fill`, agregado `Order`.
+- [ ] `portfolio/`: `Account`, `Position`.
+- [ ] `market/`: `Quote`, `Bar`, `Timeframe`, `MarketClock`.
+- [ ] `risk/`: `RiskLimits`, `RiskPolicy`, `RiskViolation`.
+
+## 9. Decisiones de modelado del dominio
+
+| Value object | Regla | Motivo |
+|---|---|---|
+| `Symbol` | Mayúsculas, 1–10 caracteres, empieza con letra, solo `A-Z 0-9 . -`, no termina en separador | Cubre tickers con clase (`BRK.B`, `BF-B`). El formato propio de cada broker (`BRK B` en IBKR) lo traduce el adaptador. |
+| `Price` | Estrictamente positivo, máximo 4 decimales, normalizado | Las acciones bajo 1 USD cotizan en 0.0001. El tick mínimo por rango de precio (Regla 612 de Reg NMS) se valida al crear la orden, no aquí. |
+| `Quantity` | No negativa, máximo 9 decimales (fraccionadas) | El cero es un estado válido (cantidad llenada inicial). Que una orden pida más de cero lo valida `OrderRequest`. Las ventas en corto quedan fuera del MVP. |
+| `Money` | Puede ser negativo, precisión completa en cálculos, redondeo bancario solo al mostrar o reportar | Sirve para P&L. Operar monedas distintas es error (`CurrencyMismatch`). Solo existe `Currency::Usd` por ahora. |
+
+- Toda la aritmética usa operaciones `checked_*`: un desbordamiento devuelve `DomainError::ArithmeticOverflow` en lugar de provocar un `panic`.
+- La igualdad de `Decimal` es numérica: `1.5 == 1.50`.
 - [ ] Fase 1: modelado del dominio.
