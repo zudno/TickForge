@@ -321,7 +321,15 @@ pub trait SignalGenerator: Send + Sync {
 - [x] Pruebas de integración de los casos de uso contra el simulador.
 - [ ] Pendientes para fases posteriores: `WatchlistRepository` (fase 6), `SignalGenerator` (fase 9), reintentos con backoff (fase 7).
 
-**Fase 2 completa.** Siguiente: fase 3, adaptador de Alpaca (paper trading).
+**Fase 2 completa.**
+
+### Fase 3 — Adaptador de Alpaca
+
+- [x] REST: `AlpacaBrokerGateway` (cuenta, posiciones, órdenes, envío idempotente, cancelación, reloj de mercado).
+- [x] REST: `AlpacaMarketData` (última cotización, velas históricas).
+- [x] Capa anticorrupción `wire/` → `mapping/` con validación completa.
+- [x] Pruebas con servidor HTTP falso (`wiremock`) y prueba de humo opcional contra paper trading.
+- [ ] WebSocket: `trade_updates` (actualizaciones de órdenes) y flujo de cotizaciones en tiempo real.
 
 ## 9. Decisiones de modelado del dominio
 
@@ -392,3 +400,20 @@ pub trait SignalGenerator: Send + Sync {
 | `ClientOrderIdGenerator` falible | Devuelve `Result` para que ninguna implementación necesite `unwrap` al validar el formato. |
 | Simulador (`PaperBroker`) | Cuenta de efectivo sin margen, solo largos. Órdenes a mercado se llenan al `ask`/`bid`; límites cuando la cotización las vuelve ejecutables, al precio de mercado. Llenados siempre totales. Idempotente por `ClientOrderId`. `fail_next_submit` simula caídas. |
 | Pruebas de casos de uso | En `crates/application/tests/` contra el simulador (dependencia solo de desarrollo). Las utilidades de `tests/common/` permiten `unwrap` explícitamente porque clippy no las reconoce como pruebas. |
+
+## 11. Decisiones del adaptador de Alpaca
+
+| Concepto | Decisión |
+|---|---|
+| Entornos | `AlpacaConfig::paper` es el único constructor de conveniencia. Para `Live` hay que armar la configuración a mano en el composition root (decisión explícita). |
+| Credenciales | `secrecy::SecretString` (no aparecen en `Debug`) y encabezados HTTP marcados como sensibles. Se leen de `.env`, nunca del código. |
+| TLS | `reqwest` con `rustls`: sin depender de OpenSSL del sistema (importante en Windows). |
+| Números | La Trading API manda texto (`"100.25"`) y la Market Data API números JSON; ambos se convierten a `Decimal` sin pasar por aritmética flotante. |
+| Estados de orden | Los estados "vivos" de Alpaca (`new`, `partially_filled`, `held`, `done_for_day`, …) se derivan de la cantidad llenada para tolerar respuestas cruzadas. `accepted`/`pending_new` → `PendingNew`; `replaced` → `Canceled`. Estado desconocido → error. |
+| No soportado (error explícito) | Órdenes por monto (`notional`), tipos distintos de `market`/`limit`, vigencias distintas de `day`/`gtc`, posiciones en corto. Si existen en la cuenta (por ejemplo, creadas desde la web), la consulta falla con un mensaje claro en lugar de ignorarlas. |
+| Idempotencia | Si `POST /v2/orders` responde 422 `client_order_id must be unique`, se recupera la orden existente con `GET /v2/orders:by_client_order_id`. |
+| Errores HTTP | 401 → `Unauthorized`; 429 → `RateLimited`; 5xx y fallas de red → `Unavailable` (reintentables); 403/422 → `Rejected` con el mensaje de Alpaca; 404 → `None` / `OrderNotFound` / `NoData` según el caso. |
+| Cotizaciones | Precio `0` significa que ese lado no tiene ofertas → `None`. Feed configurable (`iex` gratuito por defecto, `sip` de pago). |
+| Velas | Se piden en orden descendente con `limit` (una sola página) y una ventana de inicio holgada que cubre noches, fines de semana y feriados; se devuelven en orden ascendente. |
+| Streaming | `order_updates` y `subscribe` devuelven `Unavailable` hasta implementar los WebSocket (siguiente incremento). |
+| Prueba de humo | `cargo test -p tickforge-adapter-alpaca --test paper_smoke -- --ignored --nocapture`. Solo lectura, verifica que el entorno sea paper. No corre en CI. |
