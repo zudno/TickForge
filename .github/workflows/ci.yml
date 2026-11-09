@@ -1,0 +1,53 @@
+# Integración continua: formato, lints, pruebas y auditoría de dependencias.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancela ejecuciones anteriores de la misma rama o PR
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Instala el toolchain fijado en rust-toolchain.toml
+      - run: rustup toolchain install --no-self-update
+      - run: cargo fmt --all -- --check
+
+  clippy-test:
+    name: Clippy + Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows es el entorno de desarrollo principal; Linux cubre el resto
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  deny:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

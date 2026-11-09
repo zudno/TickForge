@@ -72,11 +72,20 @@ cargo build --workspace
 cargo test --workspace
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
+cargo deny check
 cargo run -p tickforge
 ```
 
 Antes de dar una tarea por terminada: `cargo fmt --all`, `cargo clippy ... -D warnings` y
-`cargo test --workspace` deben pasar sin errores.
+`cargo test --workspace` deben pasar sin errores. Al agregar dependencias, `cargo deny check`
+también (si una licencia nueva es necesaria, agregarla a `deny.toml` con justificación).
+
+## Flujo de Git
+
+- Nunca commitear directo a `main`: rama por tarea (`feat/...`, `fix/...`, `chore/...`) y PR.
+- El CI (`.github/workflows/ci.yml`) corre `fmt`, `clippy`, `test` (Linux y Windows) y `cargo-deny`;
+  un PR solo se fusiona con el CI en verde.
+- Saltos de línea: LF en todo el repositorio (`.gitattributes`).
 
 ## Entorno
 
