@@ -72,7 +72,7 @@ IEX Cloud cerró en 2024: no usar.
 | Fase | Objetivo | Entregable |
 |---|---|---|
 | 0. Fundamentos | Workspace, CI (`fmt`, `clippy -D warnings`, `test`, `cargo-deny`), configuración, logging a archivo | Esqueleto que compila ✅ (workspace + CI; logging pasa a la fase 4) |
-| 1. Dominio | `Order`, `Position`, `Quote`, `Money`, `Price`, `Quantity`, máquina de estados de órdenes. Sin I/O | Dominio con pruebas unitarias y de propiedades |
+| 1. Dominio | `Order`, `Position`, `Quote`, `Money`, `Price`, `Quantity`, máquina de estados de órdenes. Sin I/O | Dominio con pruebas unitarias y de propiedades ✅ |
 | 2. Aplicación | Puertos (traits) y casos de uso, probados con mocks y el broker simulado | Casos de uso probados sin red |
 | 3. Adaptador Alpaca | REST (cuenta, posiciones, órdenes), WebSocket de datos y `trade_updates`, mapeo wire ⇄ dominio | Integración con paper trading |
 | 4. TUI básica | Bucle de eventos, layout, watchlist en vivo, barra de estado | Pantalla funcional |
@@ -307,9 +307,11 @@ pub trait SignalGenerator: Send + Sync {
 - [x] `DomainError` (`thiserror`, mensajes en español).
 - [x] Value objects de `shared/`: `Symbol`, `Price`, `Quantity`, `Money` + `Currency`.
 - [x] `trading/`: enums de orden, `OrderStatus` (máquina de estados), ids, `OrderRequest`, `Fill`, agregado `Order`, `OrderEvent`.
-- [ ] `portfolio/`: `Account`, `Position`.
-- [ ] `market/`: `Quote`, `Bar`, `Timeframe`, `MarketClock`.
-- [ ] `risk/`: `RiskLimits`, `RiskPolicy`, `RiskViolation`.
+- [x] `portfolio/`: `Account` (+ `AccountBalances`), `Position`.
+- [x] `market/`: `Quote`, `TradeTick`, `Bar` (+ `Ohlc`), `Timeframe`, `MarketClock`.
+- [x] `risk/`: `RiskLimits`, `RiskPolicy` (+ `RiskContext`, `RiskAssessment`), `RiskViolation`.
+
+**Fase 1 completa.** Siguiente: fase 2, puertos y casos de uso en `crates/application`.
 
 ## 9. Decisiones de modelado del dominio
 
@@ -340,4 +342,28 @@ pub trait SignalGenerator: Send + Sync {
 | Atomicidad | Si un comando del agregado falla, el `Order` queda exactamente igual (verificado con `proptest`). |
 | `Order::restore` | Reconstruye una orden desde el estado del broker (`OrderSnapshot`) y valida coherencia entre estado, cantidad llenada y precio promedio. |
 | Tipos de orden | MVP: `Market` y `Limit`; `TimeInForce`: `Day` y `Gtc`. Reglas propias de cada broker (por ejemplo, fraccionadas solo con `Day` en Alpaca) se validan en el adaptador. |
-- [ ] Fase 1: modelado del dominio.
+
+### Subdominio de portafolio
+
+| Concepto | Decisión |
+|---|---|
+| `Account` | Saldos del broker (`equity`, `cash`, `buying_power`, `last_equity`) en una sola moneda. `cash` puede ser negativo (margen); `buying_power` no. P&L del día = `equity - last_equity`. |
+| `Position` | Solo posiciones largas. Guarda el costo total, no el precio promedio, para no acumular redondeos. Ventas por costo promedio; cerrar por completo deja el costo exactamente en cero. Vender más de lo que se tiene es error. |
+
+### Subdominio de mercado
+
+| Concepto | Decisión |
+|---|---|
+| `Quote` | `bid` y `ask` opcionales (puede faltar un lado fuera de horario). Se aceptan cotizaciones cruzadas y se exponen con `is_crossed`. Precio ejecutable: `ask` para comprar, `bid` para vender. |
+| `Bar` | Valida que el máximo y el mínimo contengan a la apertura y al cierre. Incluye símbolo y `Timeframe` (`1m`, `5m`, `15m`, `1h`, `1d`). |
+| `MarketClock` | Lo calcula el broker (feriados y cierres anticipados); el dominio solo valida coherencia entre el estado abierto/cerrado y el próximo evento. |
+
+### Subdominio de riesgo
+
+| Concepto | Decisión |
+|---|---|
+| Resultado | `RiskAssessment` con **todas** las violaciones, para que la TUI muestre todo lo que hay que corregir de una vez. `Err` se reserva para datos incoherentes (por ejemplo, cotización de otro símbolo). |
+| Reglas | Cuenta bloqueada, cotización vieja, sin precio ejecutable, valor máximo por orden, poder de compra, valor máximo de la posición resultante, venta mayor a lo que se tiene (sin cortos) y fat-finger. |
+| Precio de referencia | El límite si existe; si no, el precio ejecutable (`ask`/`bid`). Una orden a mercado sin precio ejecutable se bloquea. |
+| Fat-finger | Desviación del precio límite respecto al precio ejecutable, en ambas direcciones. |
+| Límites | `RiskLimits` valida que todos sean positivos; se cargarán desde la configuración. |
