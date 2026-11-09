@@ -28,6 +28,8 @@ tickforge-adapter-paper-sim = { path = "crates/adapters/broker-paper-sim" }
 # Dominio
 rust_decimal = "1"
 thiserror = "2"
+# Sin la feature `clock`: el dominio no puede leer la hora del sistema, se le inyecta
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 # Pruebas
 rust_decimal_macros = "1"

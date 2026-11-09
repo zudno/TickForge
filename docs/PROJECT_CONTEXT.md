@@ -306,7 +306,7 @@ pub trait SignalGenerator: Send + Sync {
 
 - [x] `DomainError` (`thiserror`, mensajes en español).
 - [x] Value objects de `shared/`: `Symbol`, `Price`, `Quantity`, `Money` + `Currency`.
-- [ ] `trading/`: enums de orden, `OrderStatus` (máquina de estados), ids, `OrderRequest`, `Fill`, agregado `Order`.
+- [x] `trading/`: enums de orden, `OrderStatus` (máquina de estados), ids, `OrderRequest`, `Fill`, agregado `Order`, `OrderEvent`.
 - [ ] `portfolio/`: `Account`, `Position`.
 - [ ] `market/`: `Quote`, `Bar`, `Timeframe`, `MarketClock`.
 - [ ] `risk/`: `RiskLimits`, `RiskPolicy`, `RiskViolation`.
@@ -322,4 +322,22 @@ pub trait SignalGenerator: Send + Sync {
 
 - Toda la aritmética usa operaciones `checked_*`: un desbordamiento devuelve `DomainError::ArithmeticOverflow` en lugar de provocar un `panic`.
 - La igualdad de `Decimal` es numérica: `1.5 == 1.50`.
+- El dominio usa `chrono` **sin** la feature `clock`: no puede leer la hora del sistema. Toda marca
+  de tiempo llega como parámetro (en la aplicación vendrá del puerto `Clock`), lo que hace las
+  pruebas deterministas.
+
+### Subdominio de trading
+
+| Concepto | Decisión |
+|---|---|
+| `OrderRequest` vs `Order` | `OrderRequest` es la intención validada (lo que evalúa el riesgo). `Order` existe solo cuando el broker asigna un `OrderId`. |
+| `ClientOrderId` | Lo genera TickForge (puerto de la capa de aplicación) para idempotencia en reintentos. Formato: `A-Z a-z 0-9 - _`, máximo 48 caracteres. |
+| `OrderId` / `FillId` | Opacos (UUID en Alpaca, entero en IBKR): solo se valida ASCII visible, máximo 128 caracteres. |
+| Tick mínimo | Regla 612 de Reg NMS: 0.01 desde 1 USD, 0.0001 por debajo. Los incrementos de 0.005 de la enmienda de 2024 no están modelados (se rechazan de forma conservadora). |
+| Máquina de estados | `match` exhaustivo en `OrderStatus::can_transition_to`. Se permiten saltos (`PendingNew -> Filled`) porque el broker puede agrupar o perder eventos. Solo `PendingNew` puede pasar a `Rejected`. |
+| Cancelación | `PendingCancel` es un estado propio: una ejecución parcial no lo cambia, una ejecución total gana la carrera (`Filled`) y un rechazo de la cancelación regresa a `New` o `PartiallyFilled`. |
+| Ejecuciones | Se acumula el nocional (`precio * cantidad`) y el precio promedio se deriva con precisión completa. Un `FillId` repetido se ignora (`Ok(None)`): reprocesar eventos es seguro. |
+| Atomicidad | Si un comando del agregado falla, el `Order` queda exactamente igual (verificado con `proptest`). |
+| `Order::restore` | Reconstruye una orden desde el estado del broker (`OrderSnapshot`) y valida coherencia entre estado, cantidad llenada y precio promedio. |
+| Tipos de orden | MVP: `Market` y `Limit`; `TimeInForce`: `Day` y `Gtc`. Reglas propias de cada broker (por ejemplo, fraccionadas solo con `Day` en Alpaca) se validan en el adaptador. |
 - [ ] Fase 1: modelado del dominio.
