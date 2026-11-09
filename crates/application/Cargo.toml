@@ -1,0 +1,13 @@
+[package]
+name = "tickforge-application"
+description = "Casos de uso y puertos (traits) que la infraestructura implementa"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+tickforge-domain.workspace = true
+
+[lints]
+workspace = true

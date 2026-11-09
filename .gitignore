@@ -1,0 +1,26 @@
+# Artefactos de compilación
+/target
+
+# Secretos y configuración local (nunca versionar llaves de API)
+.env
+.env.*
+!.env.example
+config/local.toml
+
+# Bases de datos y logs locales
+*.db
+*.db-shm
+*.db-wal
+/logs/
+
+# Datos y artefactos de ML (los modelos se versionan aparte)
+/ml/data/
+/ml/.venv/
+__pycache__/
+
+# Editores y sistema operativo
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+[package]
+name = "tickforge-domain"
+description = "Núcleo del dominio: entidades, value objects y reglas de negocio puras (sin I/O ni async)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
