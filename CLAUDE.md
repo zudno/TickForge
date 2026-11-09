@@ -64,6 +64,12 @@ Workspace de Cargo con un crate por capa. El compilador hace cumplir las depende
   (`broker-paper-sim`). Nunca pegarle a la red en pruebas.
 - Adaptadores HTTP: `wiremock` con respuestas grabadas de la API.
 - TUI: snapshots con `insta` sobre `ratatui::backend::TestBackend`.
+- Archivos de pruebas de integración (`tests/*.rs` y `tests/common/mod.rs`): clippy no reconoce
+  las funciones auxiliares sin `#[test]` como pruebas, así que cada archivo raíz de prueba lleva
+  `#![allow(clippy::unwrap_used, clippy::expect_used)]` con un comentario. Nunca en código de `src/`.
+- Pruebas contra servicios reales (por ejemplo `paper_smoke`): siempre `#[ignore]`, solo lectura,
+  con salvaguarda de entorno paper. Se ejecutan a mano:
+  `cargo test -p tickforge-adapter-alpaca --test paper_smoke -- --ignored --nocapture`.
 
 ## Comandos
 

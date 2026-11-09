@@ -1,0 +1,29 @@
+[package]
+name = "tickforge-adapter-alpaca"
+description = "Adaptador de Alpaca: ejecución de órdenes y datos de mercado vía REST (y WebSocket en una fase posterior)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+tickforge-domain.workspace = true
+tickforge-application.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+secrecy.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+wiremock.workspace = true
+rust_decimal_macros.workspace = true
+dotenvy.workspace = true
+
+[lints]
+workspace = true
