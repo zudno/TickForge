@@ -19,7 +19,7 @@ pub(crate) fn quote(symbol: &Symbol, wire: LatestQuoteResponseWire) -> Result<Qu
 }
 
 /// Alpaca usa `0` para indicar que un lado del libro no tiene ofertas.
-fn optional_price(field: &str, value: &Number) -> Result<Option<Price>, MappingError> {
+pub(crate) fn optional_price(field: &str, value: &Number) -> Result<Option<Price>, MappingError> {
     let value = number(field, value)?;
     if value <= Decimal::ZERO {
         return Ok(None);

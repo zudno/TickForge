@@ -1,7 +1,7 @@
 use std::fmt;
 use std::time::Duration;
 
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 
 /// Entorno de Alpaca. Solo `Paper` tiene constructor de conveniencia: operar en `Live`
 /// debe ser una decisión explícita del composition root.
@@ -16,6 +16,14 @@ impl AlpacaEnvironment {
         match self {
             Self::Paper => "https://paper-api.alpaca.markets",
             Self::Live => "https://api.alpaca.markets",
+        }
+    }
+
+    /// WebSocket de actualizaciones de órdenes (`trade_updates`).
+    pub fn trading_stream_url(self) -> &'static str {
+        match self {
+            Self::Paper => "wss://paper-api.alpaca.markets/stream",
+            Self::Live => "wss://api.alpaca.markets/stream",
         }
     }
 }
@@ -50,6 +58,15 @@ impl AlpacaCredentials {
             secret_key: SecretString::from(secret_key),
         }
     }
+
+    /// Copia independiente para los clientes que necesitan autenticarse más tarde
+    /// (por ejemplo, al abrir un WebSocket).
+    pub(crate) fn duplicate(&self) -> Self {
+        Self::new(
+            self.key_id.expose_secret().to_owned(),
+            self.secret_key.expose_secret().to_owned(),
+        )
+    }
 }
 
 impl fmt::Debug for AlpacaCredentials {
@@ -65,11 +82,15 @@ pub struct AlpacaConfig {
     pub data_feed: DataFeed,
     pub trading_base_url: String,
     pub data_base_url: String,
+    pub trading_stream_url: String,
+    /// Base del WebSocket de datos; el feed se agrega al conectar (`/v2/iex`).
+    pub data_stream_base_url: String,
     pub request_timeout: Duration,
 }
 
 impl AlpacaConfig {
     pub const DATA_BASE_URL: &'static str = "https://data.alpaca.markets";
+    pub const DATA_STREAM_BASE_URL: &'static str = "wss://stream.data.alpaca.markets";
 
     /// Configuración de paper trading con el feed gratuito IEX.
     pub fn paper(credentials: AlpacaCredentials) -> Self {
@@ -79,15 +100,33 @@ impl AlpacaConfig {
             data_feed: DataFeed::Iex,
             trading_base_url: AlpacaEnvironment::Paper.trading_base_url().to_owned(),
             data_base_url: Self::DATA_BASE_URL.to_owned(),
+            trading_stream_url: AlpacaEnvironment::Paper.trading_stream_url().to_owned(),
+            data_stream_base_url: Self::DATA_STREAM_BASE_URL.to_owned(),
             request_timeout: Duration::from_secs(10),
         }
     }
 
-    /// Redirige ambas APIs a otras URLs (servidor falso en pruebas).
+    /// Redirige ambas APIs REST a otras URLs (servidor falso en pruebas).
     pub fn with_base_urls(mut self, trading: &str, data: &str) -> Self {
         self.trading_base_url = trading.trim_end_matches('/').to_owned();
         self.data_base_url = data.trim_end_matches('/').to_owned();
         self
+    }
+
+    /// Redirige ambos WebSocket a otras URLs (servidor falso en pruebas).
+    pub fn with_stream_urls(mut self, trading_stream: &str, data_stream_base: &str) -> Self {
+        self.trading_stream_url = trading_stream.to_owned();
+        self.data_stream_base_url = data_stream_base.trim_end_matches('/').to_owned();
+        self
+    }
+
+    /// URL completa del WebSocket de datos para el feed configurado.
+    pub fn data_stream_url(&self) -> String {
+        format!(
+            "{}/v2/{}",
+            self.data_stream_base_url,
+            self.data_feed.as_str()
+        )
     }
 }
 

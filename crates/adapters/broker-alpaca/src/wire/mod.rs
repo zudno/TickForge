@@ -5,9 +5,13 @@
 //! Los campos que no se usan se ignoran al deserializar.
 
 mod market_data;
+mod streaming;
 mod trading;
 
 pub(crate) use market_data::{BarWire, BarsResponseWire, LatestQuoteResponseWire};
+pub(crate) use streaming::{
+    StreamBarWire, StreamQuoteWire, StreamTradeWire, TradeUpdateWire, TradingStreamMessageWire,
+};
 pub(crate) use trading::{
     AccountWire, ClockWire, ErrorBodyWire, NewOrderBodyWire, OrderWire, PositionWire,
 };

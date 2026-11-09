@@ -1,17 +1,23 @@
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use futures::{StreamExt, future};
 use reqwest::StatusCode;
+use secrecy::ExposeSecret;
+use serde_json::{Value, json};
 use tickforge_application::ports::{BrokerError, BrokerGateway, OrderUpdate};
 use tickforge_domain::market::MarketClock;
 use tickforge_domain::portfolio::{Account, Position};
 use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::{Order, OrderId, OrderRequest};
 
-use crate::config::AlpacaConfig;
+use crate::config::{AlpacaConfig, AlpacaCredentials};
 use crate::error::AlpacaSetupError;
 use crate::http::{AlpacaHttp, HttpError};
 use crate::mapping::{self, MappingError};
-use crate::wire::{AccountWire, ClockWire, OrderWire, PositionWire};
+use crate::websocket::{self, Socket, StreamError};
+use crate::wire::{
+    AccountWire, ClockWire, OrderWire, PositionWire, TradeUpdateWire, TradingStreamMessageWire,
+};
 
 /// Mensaje con el que Alpaca rechaza un `client_order_id` repetido.
 const DUPLICATE_CLIENT_ORDER_ID: &str = "client_order_id must be unique";
@@ -19,9 +25,14 @@ const DUPLICATE_CLIENT_ORDER_ID: &str = "client_order_id must be unique";
 /// Límite máximo de órdenes por consulta que acepta la API.
 const MAX_ORDERS_PER_PAGE: &str = "500";
 
+/// Mensajes que se toleran durante el saludo antes de considerarlo fallido.
+const MAX_HANDSHAKE_MESSAGES: usize = 20;
+
 /// Implementación de `BrokerGateway` sobre la Trading API v2 de Alpaca.
 pub struct AlpacaBrokerGateway {
     http: AlpacaHttp,
+    credentials: AlpacaCredentials,
+    stream_url: String,
 }
 
 impl AlpacaBrokerGateway {
@@ -32,7 +43,46 @@ impl AlpacaBrokerGateway {
                 &config.credentials,
                 config.request_timeout,
             )?,
+            credentials: config.credentials.duplicate(),
+            stream_url: config.trading_stream_url.clone(),
         })
+    }
+
+    /// Conecta al WebSocket de trading, se autentica y se suscribe a `trade_updates`.
+    async fn open_trade_updates(&self) -> Result<Socket, StreamError> {
+        let mut socket = websocket::connect(&self.stream_url).await?;
+
+        websocket::send_json(
+            &mut socket,
+            &json!({
+                "action": "auth",
+                "key": self.credentials.key_id.expose_secret(),
+                "secret": self.credentials.secret_key.expose_secret(),
+            }),
+        )
+        .await?;
+        let authorization = wait_for_stream(&mut socket, "authorization").await?;
+        if authorization.get("status").and_then(Value::as_str) != Some("authorized") {
+            return Err(StreamError::Unauthorized);
+        }
+
+        websocket::send_json(
+            &mut socket,
+            &json!({ "action": "listen", "data": { "streams": ["trade_updates"] } }),
+        )
+        .await?;
+        let listening = wait_for_stream(&mut socket, "listening").await?;
+        let subscribed = listening
+            .get("streams")
+            .and_then(Value::as_array)
+            .is_some_and(|streams| streams.iter().any(|s| s == "trade_updates"));
+        if !subscribed {
+            return Err(StreamError::Protocol(
+                "Alpaca no confirmó la suscripción a trade_updates".to_owned(),
+            ));
+        }
+
+        Ok(socket)
     }
 
     async fn order_by_client_id(&self, request: &OrderRequest) -> Result<Order, BrokerError> {
@@ -131,12 +181,17 @@ impl BrokerGateway for AlpacaBrokerGateway {
         }
     }
 
+    /// Flujo de `trade_updates`. Termina si se cierra la conexión; reconectar (y reconciliar
+    /// por REST lo ocurrido mientras tanto) es responsabilidad de quien lo consume.
     async fn order_updates(&self) -> Result<BoxStream<'static, OrderUpdate>, BrokerError> {
-        // El flujo `trade_updates` por WebSocket se implementa en el siguiente incremento
-        Err(BrokerError::Unavailable(
-            "el flujo de actualizaciones de órdenes (WebSocket) aún no está implementado"
-                .to_owned(),
-        ))
+        let socket = self.open_trade_updates().await.map_err(stream_error)?;
+
+        let updates = socket
+            .take_while(|message| future::ready(message.is_ok()))
+            .filter_map(|message| future::ready(message.ok().and_then(websocket::payload)))
+            .filter_map(|payload| future::ready(parse_trade_update(&payload)))
+            .boxed();
+        Ok(updates)
     }
 
     async fn market_clock(&self) -> Result<MarketClock, BrokerError> {
@@ -166,4 +221,46 @@ fn broker_error(error: HttpError) -> BrokerError {
 
 fn invalid_response(error: MappingError) -> BrokerError {
     BrokerError::InvalidResponse(error.to_string())
+}
+
+fn stream_error(error: StreamError) -> BrokerError {
+    match error {
+        StreamError::Transport(message) => BrokerError::Unavailable(message),
+        StreamError::Timeout => {
+            BrokerError::Unavailable("el WebSocket de trading no respondió a tiempo".to_owned())
+        }
+        StreamError::Closed => {
+            BrokerError::Unavailable("el WebSocket de trading cerró la conexión".to_owned())
+        }
+        StreamError::Unauthorized => BrokerError::Unauthorized,
+        StreamError::ConnectionLimit(message) | StreamError::NotEntitled(message) => {
+            BrokerError::Rejected { reason: message }
+        }
+        StreamError::Protocol(message) => BrokerError::InvalidResponse(message),
+    }
+}
+
+/// Lee mensajes del saludo hasta encontrar el del `stream` indicado y devuelve su `data`.
+async fn wait_for_stream(socket: &mut Socket, stream: &str) -> Result<Value, StreamError> {
+    for _ in 0..MAX_HANDSHAKE_MESSAGES {
+        let payload = websocket::next_payload(socket).await?;
+        let message: TradingStreamMessageWire = serde_json::from_slice(&payload)
+            .map_err(|error| StreamError::Protocol(error.to_string()))?;
+        if message.stream == stream {
+            return Ok(message.data);
+        }
+    }
+    Err(StreamError::Protocol(format!(
+        "no llegó la respuesta '{stream}' del WebSocket de trading"
+    )))
+}
+
+/// Mensaje del stream ya autenticado. Lo que no sea un `trade_updates` válido se descarta.
+fn parse_trade_update(payload: &[u8]) -> Option<OrderUpdate> {
+    let message: TradingStreamMessageWire = serde_json::from_slice(payload).ok()?;
+    if message.stream != "trade_updates" {
+        return None;
+    }
+    let wire: TradeUpdateWire = serde_json::from_value(message.data).ok()?;
+    mapping::trade_update(wire).ok().flatten()
 }
