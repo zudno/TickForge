@@ -1,6 +1,6 @@
 [package]
 name = "tickforge-adapter-paper-sim"
-description = "Broker simulado en memoria para pruebas, demos y desarrollo sin red"
+description = "Implementaciones en memoria de los puertos (broker, datos, diario, reloj) para pruebas, demos y desarrollo sin red"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,14 @@ publish.workspace = true
 [dependencies]
 tickforge-domain.workspace = true
 tickforge-application.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+rust_decimal.workspace = true
+rust_decimal_macros.workspace = true
 
 [lints]
 workspace = true
