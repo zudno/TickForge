@@ -2,26 +2,42 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
-use futures::stream::BoxStream;
+use futures::stream::{self, BoxStream};
+use futures::{StreamExt, future};
 use reqwest::StatusCode;
+use secrecy::ExposeSecret;
+use serde_json::json;
 use tickforge_application::ports::{Clock, MarketDataError, MarketDataFeed, MarketEvent};
 use tickforge_domain::market::{Bar, Quote, Timeframe};
 use tickforge_domain::shared::Symbol;
 
-use crate::config::{AlpacaConfig, DataFeed};
+use crate::config::{AlpacaConfig, AlpacaCredentials, DataFeed};
 use crate::error::AlpacaSetupError;
 use crate::http::{AlpacaHttp, HttpError};
-use crate::mapping::{self, MappingError};
+use crate::mapping::{self, DataFrameItem, MappingError};
+use crate::websocket::{self, Socket, StreamError};
 use crate::wire::{BarsResponseWire, LatestQuoteResponseWire};
 
 /// Máximo de velas que la API devuelve en una sola página.
 const MAX_BARS_PER_PAGE: usize = 10_000;
+
+/// Mensajes que se toleran durante el saludo antes de considerarlo fallido.
+const MAX_HANDSHAKE_MESSAGES: usize = 20;
 
 /// Implementación de `MarketDataFeed` sobre la Market Data API v2 de Alpaca.
 pub struct AlpacaMarketData {
     http: AlpacaHttp,
     feed: DataFeed,
     clock: Arc<dyn Clock>,
+    credentials: AlpacaCredentials,
+    stream_url: String,
+}
+
+/// Confirmación que se espera en cada paso del saludo del WebSocket de datos.
+#[derive(Debug, Clone, Copy)]
+enum Expected {
+    Success(&'static str),
+    Subscription,
 }
 
 impl AlpacaMarketData {
@@ -35,7 +51,41 @@ impl AlpacaMarketData {
             )?,
             feed: config.data_feed,
             clock,
+            credentials: config.credentials.duplicate(),
+            stream_url: config.data_stream_url(),
         })
+    }
+
+    /// Conecta, se autentica y se suscribe a cotizaciones, operaciones y velas de 1 minuto.
+    async fn open_stream(&self, symbols: &[Symbol]) -> Result<Socket, StreamError> {
+        let mut socket = websocket::connect(&self.stream_url).await?;
+        wait_for(&mut socket, Expected::Success("connected")).await?;
+
+        websocket::send_json(
+            &mut socket,
+            &json!({
+                "action": "auth",
+                "key": self.credentials.key_id.expose_secret(),
+                "secret": self.credentials.secret_key.expose_secret(),
+            }),
+        )
+        .await?;
+        wait_for(&mut socket, Expected::Success("authenticated")).await?;
+
+        let tickers: Vec<&str> = symbols.iter().map(Symbol::as_str).collect();
+        websocket::send_json(
+            &mut socket,
+            &json!({
+                "action": "subscribe",
+                "quotes": tickers,
+                "trades": tickers,
+                "bars": tickers,
+            }),
+        )
+        .await?;
+        wait_for(&mut socket, Expected::Subscription).await?;
+
+        Ok(socket)
     }
 }
 
@@ -91,14 +141,92 @@ impl MarketDataFeed for AlpacaMarketData {
         Ok(bars)
     }
 
+    /// Flujo en tiempo real. El plan gratuito de Alpaca admite **una sola conexión** de datos:
+    /// conviene suscribir todos los símbolos en una llamada. El flujo termina si se cierra la
+    /// conexión; reconectar es responsabilidad de quien lo consume.
     async fn subscribe(
         &self,
-        _symbols: &[Symbol],
+        symbols: &[Symbol],
     ) -> Result<BoxStream<'static, MarketEvent>, MarketDataError> {
-        // El streaming por WebSocket se implementa en el siguiente incremento
-        Err(MarketDataError::Unavailable(
-            "el flujo de datos en tiempo real (WebSocket) aún no está implementado".to_owned(),
-        ))
+        if symbols.is_empty() {
+            return Ok(stream::empty().boxed());
+        }
+        let socket = self
+            .open_stream(symbols)
+            .await
+            .map_err(|error| stream_error(error, &symbols[0]))?;
+
+        let events = socket
+            .take_while(|message| future::ready(message.is_ok()))
+            .filter_map(|message| future::ready(message.ok().and_then(websocket::payload)))
+            .flat_map(|payload| {
+                let events =
+                    mapping::data_frame(&payload)
+                        .into_iter()
+                        .filter_map(|item| match item {
+                            DataFrameItem::Event(event) => Some(event),
+                            _ => None,
+                        });
+                stream::iter(events)
+            })
+            .boxed();
+        Ok(events)
+    }
+}
+
+/// Lee mensajes del saludo hasta recibir la confirmación esperada.
+async fn wait_for(socket: &mut Socket, expected: Expected) -> Result<(), StreamError> {
+    for _ in 0..MAX_HANDSHAKE_MESSAGES {
+        let payload = websocket::next_payload(socket).await?;
+        for item in mapping::data_frame(&payload) {
+            match (item, expected) {
+                (DataFrameItem::Error { code, message }, _) => {
+                    return Err(classify_stream_error(code, message));
+                }
+                (DataFrameItem::Success(message), Expected::Success(wanted))
+                    if message == wanted =>
+                {
+                    return Ok(());
+                }
+                (DataFrameItem::Subscribed, Expected::Subscription) => return Ok(()),
+                _ => {}
+            }
+        }
+    }
+    Err(StreamError::Protocol(format!(
+        "no llegó la confirmación {expected:?} del WebSocket de datos"
+    )))
+}
+
+/// Códigos de error documentados del WebSocket de datos de Alpaca.
+fn classify_stream_error(code: i64, message: String) -> StreamError {
+    match code {
+        401 | 402 => StreamError::Unauthorized,
+        406 => StreamError::ConnectionLimit(format!(
+            "{message}: el plan gratuito permite una sola conexión de datos a la vez"
+        )),
+        409 => {
+            StreamError::NotEntitled(format!("{message}: el plan no incluye el feed solicitado"))
+        }
+        _ => StreamError::Protocol(format!("error {code}: {message}")),
+    }
+}
+
+fn stream_error(error: StreamError, symbol: &Symbol) -> MarketDataError {
+    match error {
+        StreamError::Transport(message)
+        | StreamError::ConnectionLimit(message)
+        | StreamError::NotEntitled(message) => MarketDataError::Unavailable(message),
+        StreamError::Timeout => {
+            MarketDataError::Unavailable("el WebSocket de datos no respondió a tiempo".to_owned())
+        }
+        StreamError::Closed => {
+            MarketDataError::Unavailable("el WebSocket de datos cerró la conexión".to_owned())
+        }
+        StreamError::Unauthorized => MarketDataError::Unauthorized,
+        StreamError::Protocol(message) => {
+            MarketDataError::InvalidResponse(format!("{symbol}: {message}"))
+        }
     }
 }
 

@@ -380,12 +380,3 @@ async fn market_clock_is_mapped_from_new_york_time() {
     assert!(clock.is_open());
     assert_eq!(clock.time_until_next_change(), chrono::TimeDelta::hours(6));
 }
-
-#[tokio::test]
-async fn order_updates_stream_is_not_available_yet() {
-    let server = MockServer::start().await;
-    assert!(matches!(
-        gateway(&server).order_updates().await,
-        Err(BrokerError::Unavailable(_))
-    ));
-}

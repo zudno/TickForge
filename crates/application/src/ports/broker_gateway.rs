@@ -6,7 +6,7 @@ use tickforge_domain::DomainError;
 use tickforge_domain::market::MarketClock;
 use tickforge_domain::portfolio::{Account, Position};
 use tickforge_domain::shared::Symbol;
-use tickforge_domain::trading::{Fill, Order, OrderEvent, OrderId, OrderRequest};
+use tickforge_domain::trading::{Fill, Order, OrderEvent, OrderId, OrderRequest, OrderStatus};
 
 /// Puerto de ejecución: lo implementa cada broker (Alpaca, IBKR, simulador).
 #[async_trait]
@@ -60,17 +60,36 @@ pub enum OrderUpdateKind {
 impl OrderUpdate {
     /// Traduce la actualización del broker en el comando correspondiente del agregado.
     ///
-    /// Devuelve `Ok(None)` si la actualización ya estaba aplicada (ejecución duplicada).
+    /// Es idempotente: devuelve `Ok(None)` si la orden ya refleja la actualización. Esto pasa
+    /// con frecuencia porque el estado llega por dos vías (la respuesta REST y el WebSocket)
+    /// y los eventos pueden repetirse tras una reconexión.
+    ///
+    /// Limitación conocida: una orden reconstruida desde REST (`Order::restore`) no conoce los
+    /// ids de sus ejecuciones previas; la reconciliación de la fase 6 evita aplicarlas dos veces.
     pub fn apply_to(&self, order: &mut Order) -> Result<Option<OrderEvent>, DomainError> {
         let at = self.occurred_at;
+        let status = order.status();
+
         match &self.kind {
+            OrderUpdateKind::Accepted if status != OrderStatus::PendingNew => Ok(None),
             OrderUpdateKind::Accepted => order.mark_accepted(at).map(Some),
+
+            OrderUpdateKind::Filled(_) if status == OrderStatus::Filled => Ok(None),
             OrderUpdateKind::Filled(fill) => order.apply_fill(fill.clone()),
+
+            OrderUpdateKind::Canceled if status == OrderStatus::Canceled => Ok(None),
             OrderUpdateKind::Canceled => order.mark_canceled(at).map(Some),
+
+            // Solo hay algo que revertir si la cancelación sigue pendiente
+            OrderUpdateKind::CancelRejected if status != OrderStatus::PendingCancel => Ok(None),
             OrderUpdateKind::CancelRejected => order.mark_cancel_rejected(at).map(Some),
+
+            OrderUpdateKind::Rejected { .. } if status == OrderStatus::Rejected => Ok(None),
             OrderUpdateKind::Rejected { reason } => {
                 order.mark_rejected(reason.clone(), at).map(Some)
             }
+
+            OrderUpdateKind::Expired if status == OrderStatus::Expired => Ok(None),
             OrderUpdateKind::Expired => order.mark_expired(at).map(Some),
         }
     }
@@ -102,5 +121,117 @@ impl BrokerError {
     /// Errores transitorios que pueden reintentarse con backoff.
     pub fn is_retryable(&self) -> bool {
         matches!(self, Self::Unavailable(_) | Self::RateLimited)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+    use tickforge_domain::shared::{Price, Quantity};
+    use tickforge_domain::trading::{ClientOrderId, FillId, OrderSide, OrderType, TimeInForce};
+
+    fn at(seconds: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(seconds, 0).unwrap()
+    }
+
+    fn order() -> Order {
+        let request = OrderRequest::new(
+            ClientOrderId::new("tf-1").unwrap(),
+            Symbol::new("AAPL").unwrap(),
+            OrderSide::Buy,
+            OrderType::Market,
+            Quantity::new(dec!(2)).unwrap(),
+            TimeInForce::Day,
+        )
+        .unwrap();
+        Order::new(OrderId::new("ord-1").unwrap(), request, at(0))
+    }
+
+    fn update(kind: OrderUpdateKind) -> OrderUpdate {
+        OrderUpdate {
+            order_id: OrderId::new("ord-1").unwrap(),
+            kind,
+            occurred_at: at(5),
+        }
+    }
+
+    fn fill(id: &str, quantity: rust_decimal::Decimal) -> OrderUpdateKind {
+        OrderUpdateKind::Filled(
+            Fill::new(
+                FillId::new(id).unwrap(),
+                Quantity::new(quantity).unwrap(),
+                Price::new(dec!(100)).unwrap(),
+                at(5),
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn repeated_lifecycle_updates_are_no_ops() {
+        let mut order = order();
+
+        assert!(
+            update(OrderUpdateKind::Accepted)
+                .apply_to(&mut order)
+                .unwrap()
+                .is_some()
+        );
+        // Segundo "new" (por ejemplo, REST y WebSocket a la vez)
+        assert_eq!(
+            update(OrderUpdateKind::Accepted).apply_to(&mut order),
+            Ok(None)
+        );
+
+        assert!(
+            update(OrderUpdateKind::Canceled)
+                .apply_to(&mut order)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            update(OrderUpdateKind::Canceled).apply_to(&mut order),
+            Ok(None)
+        );
+        assert_eq!(order.status(), OrderStatus::Canceled);
+    }
+
+    #[test]
+    fn fills_after_completion_are_ignored() {
+        let mut order = order();
+        update(fill("e1", dec!(2))).apply_to(&mut order).unwrap();
+        assert_eq!(order.status(), OrderStatus::Filled);
+
+        // Una ejecución con otro id sobre una orden ya completa no es un error
+        assert_eq!(update(fill("e2", dec!(1))).apply_to(&mut order), Ok(None));
+    }
+
+    #[test]
+    fn cancel_rejection_without_pending_cancel_is_a_no_op() {
+        let mut order = order();
+        update(OrderUpdateKind::Accepted)
+            .apply_to(&mut order)
+            .unwrap();
+
+        assert_eq!(
+            update(OrderUpdateKind::CancelRejected).apply_to(&mut order),
+            Ok(None)
+        );
+        assert_eq!(order.status(), OrderStatus::New);
+    }
+
+    #[test]
+    fn real_conflicts_are_still_errors() {
+        // Una orden cancelada no puede pasar a expirada
+        let mut order = order();
+        update(OrderUpdateKind::Canceled)
+            .apply_to(&mut order)
+            .unwrap();
+        assert!(
+            update(OrderUpdateKind::Expired)
+                .apply_to(&mut order)
+                .is_err()
+        );
     }
 }

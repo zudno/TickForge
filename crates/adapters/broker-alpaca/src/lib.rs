@@ -12,6 +12,7 @@ mod gateway;
 mod http;
 mod mapping;
 mod market_data;
+mod websocket;
 mod wire;
 
 pub use config::{AlpacaConfig, AlpacaCredentials, AlpacaEnvironment, DataFeed};

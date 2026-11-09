@@ -329,7 +329,10 @@ pub trait SignalGenerator: Send + Sync {
 - [x] REST: `AlpacaMarketData` (última cotización, velas históricas).
 - [x] Capa anticorrupción `wire/` → `mapping/` con validación completa.
 - [x] Pruebas con servidor HTTP falso (`wiremock`) y prueba de humo opcional contra paper trading.
-- [ ] WebSocket: `trade_updates` (actualizaciones de órdenes) y flujo de cotizaciones en tiempo real.
+- [x] WebSocket: `trade_updates` (actualizaciones de órdenes) y flujo de cotizaciones, operaciones y velas de 1 minuto en tiempo real (verificado contra paper trading).
+- [ ] Reconexión automática con backoff y reconciliación por REST tras un corte (fase 7).
+
+**Fase 3 completa.** Siguiente: fase 4, TUI básica.
 
 ## 9. Decisiones de modelado del dominio
 
@@ -396,7 +399,7 @@ pub trait SignalGenerator: Send + Sync {
 | Diario estricto antes de enviar | Si no se puede registrar la intención, **no se envía** la orden. |
 | Diario tolerante después de enviar | Si el broker ya aceptó la orden y el diario falla, se devuelve la orden y se publica `JournalWriteFailed`: ocultar una orden viva sería peor. La reconciliación (fase 6) corrige el diario. |
 | Cancelación | `CancelOrderUseCase` consulta la orden y deja que el agregado (`Order::request_cancel`) decida si es cancelable antes de llamar al broker. |
-| `OrderUpdate::apply_to` | Traduce cada actualización del broker al comando del agregado; con esto la TUI mantiene su copia de las órdenes solo a partir del flujo de eventos. |
+| `OrderUpdate::apply_to` | Traduce cada actualización del broker al comando del agregado; con esto la TUI mantiene su copia de las órdenes solo a partir del flujo de eventos. Es **idempotente**: si la orden ya refleja la actualización (por ejemplo, `new` llega por REST y por WebSocket, o una ejecución sobre una orden ya completa) devuelve `Ok(None)`. Los conflictos reales (cancelada → expirada) siguen siendo error. Limitación: una orden reconstruida por REST no conoce los ids de sus ejecuciones previas; lo resuelve la reconciliación (fase 6). |
 | `ClientOrderIdGenerator` falible | Devuelve `Result` para que ninguna implementación necesite `unwrap` al validar el formato. |
 | Simulador (`PaperBroker`) | Cuenta de efectivo sin margen, solo largos. Órdenes a mercado se llenan al `ask`/`bid`; límites cuando la cotización las vuelve ejecutables, al precio de mercado. Llenados siempre totales. Idempotente por `ClientOrderId`. `fail_next_submit` simula caídas. |
 | Pruebas de casos de uso | En `crates/application/tests/` contra el simulador (dependencia solo de desarrollo). Las utilidades de `tests/common/` permiten `unwrap` explícitamente porque clippy no las reconoce como pruebas. |
@@ -415,5 +418,11 @@ pub trait SignalGenerator: Send + Sync {
 | Errores HTTP | 401 → `Unauthorized`; 429 → `RateLimited`; 5xx y fallas de red → `Unavailable` (reintentables); 403/422 → `Rejected` con el mensaje de Alpaca; 404 → `None` / `OrderNotFound` / `NoData` según el caso. |
 | Cotizaciones | Precio `0` significa que ese lado no tiene ofertas → `None`. Feed configurable (`iex` gratuito por defecto, `sip` de pago). |
 | Velas | Se piden en orden descendente con `limit` (una sola página) y una ventana de inicio holgada que cubre noches, fines de semana y feriados; se devuelven en orden ascendente. |
-| Streaming | `order_updates` y `subscribe` devuelven `Unavailable` hasta implementar los WebSocket (siguiente incremento). |
+| WebSocket de trading | `wss://paper-api.alpaca.markets/stream`: `auth` → `authorization: authorized` → `listen trade_updates` → `listening`. Alpaca responde en **frames binarios** con JSON; se aceptan texto y binario. Eventos: `new` → `Accepted`; `fill`/`partial_fill` → `Filled` (con `execution_id`, precio y cantidad de esa ejecución); `canceled`/`replaced` → `Canceled`; `expired`; `rejected`; `order_cancel_rejected`. El resto (`pending_new`, `accepted`, `done_for_day`, …) no cambia el dominio y se ignora. |
+| WebSocket de datos | `wss://stream.data.alpaca.markets/v2/{feed}`: `connected` → `auth` → `authenticated` → `subscribe` (quotes, trades, bars) → `subscription`. Cada mensaje es un arreglo; se despacha por el campo `T` (`q`, `t`, `b`) y lo demás se ignora. Errores: 401/402 → `Unauthorized`; 406 → límite de conexiones (**el plan gratuito permite una sola conexión de datos**: suscribir todos los símbolos en una llamada); 409 → feed no incluido en el plan. |
+| Saludo con tiempo límite | Conexión y cada respuesta del saludo con 10 s de espera máxima y un tope de mensajes; así un servidor mudo nunca bloquea la TUI. |
+| Datos inválidos en vivo | Se descartan sin cortar el flujo (el tipo del flujo no admite errores por elemento). |
+| Fin del flujo | Si se cierra la conexión, el flujo termina. Reconectar con backoff y reconciliar lo ocurrido es responsabilidad del consumidor (fase 7). |
+| TLS de los WebSocket | `tokio-tungstenite` con `rustls` y el mismo proveedor criptográfico (`ring`) que `reqwest`: un solo proveedor, sin conflictos ni dependencias nativas extra. |
+| Pruebas | Servidor WebSocket local con guion (`tests/websocket_streams.rs`) y prueba de humo `paper_streams_authenticate_and_deliver_market_data` contra paper (solo lectura). |
 | Prueba de humo | `cargo test -p tickforge-adapter-alpaca --test paper_smoke -- --ignored --nocapture`. Solo lectura, verifica que el entorno sea paper. No corre en CI. |

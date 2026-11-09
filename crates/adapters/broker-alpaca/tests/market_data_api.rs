@@ -135,12 +135,3 @@ async fn http_errors_are_mapped_to_market_data_errors() {
         );
     }
 }
-
-#[tokio::test]
-async fn streaming_is_not_available_yet() {
-    let server = MockServer::start().await;
-    assert!(matches!(
-        market_data(&server).subscribe(&[aapl()]).await,
-        Err(MarketDataError::Unavailable(_))
-    ));
-}
