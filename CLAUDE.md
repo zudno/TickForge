@@ -99,6 +99,10 @@ también (si una licencia nueva es necesaria, agregarla a `deny.toml` con justif
 - El CI (`.github/workflows/ci.yml`) corre `fmt`, `clippy`, `test` (Linux y Windows) y `cargo-deny`;
   un PR solo se fusiona con el CI en verde.
 - Saltos de línea: LF en todo el repositorio (`.gitattributes`).
+- Scripts que verifican y luego commitean: empezar con `set -euo pipefail` y **no mezclar `;` con
+  `&&`**. Si una verificación falla a mitad de cadena, un `git commit` posterior separado por `;`
+  commitea solo lo que ya estaba en el stage (pasó dos veces). Antes de commitear, comprobar que
+  ni `.env`, ni `logs/`, ni `target/` estén en el stage.
 
 ## Entorno
 
