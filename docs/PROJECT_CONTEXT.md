@@ -75,7 +75,7 @@ IEX Cloud cerró en 2024: no usar.
 | 1. Dominio | `Order`, `Position`, `Quote`, `Money`, `Price`, `Quantity`, máquina de estados de órdenes. Sin I/O | Dominio con pruebas unitarias y de propiedades ✅ |
 | 2. Aplicación | Puertos (traits) y casos de uso, probados con mocks y el broker simulado | Casos de uso probados sin red ✅ |
 | 3. Adaptador Alpaca | REST (cuenta, posiciones, órdenes), WebSocket de datos y `trade_updates`, mapeo wire ⇄ dominio | Integración con paper trading |
-| 4. TUI básica | Bucle de eventos, layout, watchlist en vivo, barra de estado | Pantalla funcional |
+| 4. TUI básica | Bucle de eventos, layout, watchlist en vivo, barra de estado | Pantalla funcional ✅ |
 | 5. Órdenes | Ticket, vista previa, modal de confirmación, riesgo pre-trade, cancelación | Comprar/vender en paper |
 | 6. Persistencia | Diario de órdenes, watchlists, reconciliación al iniciar | Auditoría y recuperación |
 | 7. Robustez | Reconexión con backoff, rate limits, idempotencia (`client_order_id`), apagado limpio, kill switch, panic hook | Listo para modo real |
@@ -291,7 +291,7 @@ pub trait SignalGenerator: Send + Sync {
 
 ## 8. Estado actual
 
-- [x] Workspace de Cargo creado (edición 2024, resolver 3, toolchain 1.94.0 fijado).
+- [x] Workspace de Cargo creado (edición 2024, resolver 3, toolchain 1.94.0 fijado, MSRV 1.88).
 - [x] Crates base: `domain`, `application`, `presentation-tui`, `broker-paper-sim`, binario `tickforge`.
 - [x] Lints del workspace (`unsafe_code = "forbid"`, clippy contra `unwrap`/`expect`/`panic`/aritmética flotante).
 - [x] `.gitignore`, `.env.example`, `CLAUDE.md`, este documento.
@@ -332,7 +332,18 @@ pub trait SignalGenerator: Send + Sync {
 - [x] WebSocket: `trade_updates` (actualizaciones de órdenes) y flujo de cotizaciones, operaciones y velas de 1 minuto en tiempo real (verificado contra paper trading).
 - [ ] Reconexión automática con backoff y reconciliación por REST tras un corte (fase 7).
 
-**Fase 3 completa.** Siguiente: fase 4, TUI básica.
+**Fase 3 completa.**
+
+### Fase 4 — TUI básica
+
+- [x] Casos de uso de mercado: `WatchMarketUseCase` (foto inicial + flujo en vivo) y `GetMarketClockUseCase`.
+- [x] TUI: estado, acciones, reducer puro, mapa de teclas, ejecutor de comandos y bucle de eventos.
+- [x] Pantalla principal: barra de cuenta, watchlist en vivo, posiciones, barra de estado con PAPER siempre visible, ayuda (`?`).
+- [x] Composition root: configuración desde `.env`, logs a archivo diario (`logs/`), reloj del sistema, cableado de Alpaca.
+- [x] Verificado contra Alpaca paper con el mercado abierto (precios, cambio %, flujo en vivo).
+- [ ] Modo simulador sin red para demos (pendiente).
+
+**Fase 4 completa.** Siguiente: fase 5, órdenes (ticket, vista previa, confirmación, cancelación).
 
 ## 9. Decisiones de modelado del dominio
 
@@ -426,3 +437,20 @@ pub trait SignalGenerator: Send + Sync {
 | TLS de los WebSocket | `tokio-tungstenite` con `rustls` y el mismo proveedor criptográfico (`ring`) que `reqwest`: un solo proveedor, sin conflictos ni dependencias nativas extra. |
 | Pruebas | Servidor WebSocket local con guion (`tests/websocket_streams.rs`) y prueba de humo `paper_streams_authenticate_and_deliver_market_data` contra paper (solo lectura). |
 | Prueba de humo | `cargo test -p tickforge-adapter-alpaca --test paper_smoke -- --ignored --nocapture`. Solo lectura, verifica que el entorno sea paper. No corre en CI. |
+
+## 12. Decisiones de la TUI
+
+| Concepto | Decisión |
+|---|---|
+| Flujo | Unidireccional: evento de terminal → `keymap` → `Action` → `reduce(&mut AppState, Action) -> Vec<Command>` → `render(&AppState)`. El reducer no hace I/O ni lee el reloj: se prueba sin terminal. |
+| Efectos secundarios | `Command` (cargar portafolio, reloj, abrir flujo) lo ejecuta `CommandExecutor` en tareas de tokio; los resultados vuelven como `Action` por un canal. La interfaz nunca espera a la red. |
+| Redibujado | Teclado y cambios de tamaño: de inmediato. Datos de mercado: se agrupan y se dibujan en el siguiente tick (100 ms, ~10 FPS), porque pueden llegar cientos por segundo. |
+| Refrescos | Portafolio cada 30 s; reloj de mercado cada 60 s y justo después de abrir o cerrar la sesión. `r` refresca y reconecta el flujo si está caído. |
+| Un solo flujo de datos | `CommandExecutor` mantiene una sola tarea de mercado y aborta la anterior al reconectar (límite de una conexión del plan gratuito). |
+| Watchlist | Foto inicial (`latest_quote` + 2 velas diarias para el cierre anterior y el cambio %) y luego datos en vivo. Configurable con `TICKFORGE_WATCHLIST`. |
+| Modo visible | Insignia `PAPER` (amarilla) o `LIVE` (roja) siempre en la barra de estado; `TICKFORGE_MODE=live` se rechaza al arrancar en esta versión. |
+| Teclas | `j/k` o flechas, `r`, `?`, `Esc`, `q` y `Ctrl+C`. Solo se procesan eventos de **presionar**: Windows también envía los de soltar. |
+| Formato | El formato `{:.N}` de `Decimal` **trunca**; siempre se redondea antes (`format.rs`). Hora siempre en Nueva York (`ET`). |
+| Terminal | `ratatui::try_init`/`try_restore`, que restauran la terminal incluso ante un pánico. Logs a `logs/tickforge.log.AAAA-MM-DD`, nunca a la pantalla. |
+| Pruebas | Reducer, keymap, watchlist y formato con pruebas unitarias; pantallas con snapshots de `insta` sobre `TestBackend` (`src/ui/snapshots/`). |
+| Dependencias | `ratatui` 0.30 + `crossterm` 0.29 (0.29 de ratatui arrastraba `paste`, sin mantenimiento). MSRV subido a 1.88 para poder usar `time` 0.3.47 (RUSTSEC-2026-0009). |
