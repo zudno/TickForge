@@ -62,7 +62,7 @@ IEX Cloud cerró en 2024: no usar.
 | Tiempo | `chrono` + `chrono-tz` (horario de Nueva York) |
 | Errores | `thiserror` en librerías, `anyhow` solo en el binario |
 | Configuración y secretos | `figment` o `config`, `secrecy`, `keyring` |
-| Persistencia | `sqlx` (SQLite) |
+| Persistencia | `rusqlite` con SQLite incluido (`bundled`) — ver sección 14 |
 | Observabilidad | `tracing`, `tracing-subscriber`, `tracing-appender` (logs a archivo: la TUI ocupa stdout) |
 | Pruebas | `mockall`, `wiremock`, `insta`, `proptest` |
 | ML | `ort` (ONNX Runtime), `candle`, `linfa`, `polars`, `tonic` (gRPC) |
@@ -77,7 +77,7 @@ IEX Cloud cerró en 2024: no usar.
 | 3. Adaptador Alpaca | REST (cuenta, posiciones, órdenes), WebSocket de datos y `trade_updates`, mapeo wire ⇄ dominio | Integración con paper trading |
 | 4. TUI básica | Bucle de eventos, layout, watchlist en vivo, barra de estado | Pantalla funcional ✅ |
 | 5. Órdenes | Ticket, vista previa, modal de confirmación, riesgo pre-trade, cancelación | Comprar/vender en paper ✅ |
-| 6. Persistencia | Diario de órdenes, watchlists, reconciliación al iniciar | Auditoría y recuperación |
+| 6. Persistencia | Diario de órdenes, watchlists, reconciliación al iniciar | Auditoría y recuperación ✅ |
 | 7. Robustez | Reconexión con backoff, rate limits, idempotencia (`client_order_id`), apagado limpio, kill switch, panic hook | Listo para modo real |
 | 8. Modo real | Bandera explícita + doble confirmación + banner LIVE | v1.0 |
 | 9. ML | Grabar datos → entrenar offline → exportar ONNX → modo sombra → asesor → (opcional) autónomo | Señales predictivas |
@@ -147,7 +147,7 @@ backtesting, ML, alertas de precio, Nivel 2.
 | `crates/presentation-tui` | `tickforge-presentation-tui` | creado |
 | `crates/adapters/broker-paper-sim` | `tickforge-adapter-paper-sim` | creado |
 | `crates/adapters/broker-alpaca` | `tickforge-adapter-alpaca` | pendiente (fase 3) |
-| `crates/adapters/persistence-sqlite` | `tickforge-adapter-sqlite` | pendiente (fase 6) |
+| `crates/adapters/persistence-sqlite` | `tickforge-adapter-sqlite` | creado (fase 6) |
 | `crates/adapters/broker-ibkr` | `tickforge-adapter-ibkr` | futuro |
 | `crates/adapters/ml-onnx` | `tickforge-adapter-onnx` | futuro (fase 9) |
 | `crates/ml-features` | `tickforge-ml-features` | futuro (fase 9) |
@@ -205,7 +205,7 @@ tickforge/
 │   │   │                       mapping.rs, gateway.rs, market_data.rs)
 │   │   ├── broker-ibkr/
 │   │   ├── broker-paper-sim/
-│   │   ├── persistence-sqlite/ (migrations/, src/repositories/)
+│   │   ├── persistence-sqlite/ (migrations/, src/{store, order_journal, watchlist_repository, rows}.rs)
 │   │   └── ml-onnx/src/ (onnx_signal_generator.rs, model_registry.rs)
 │   ├── ml-features/src/ (pipeline.rs, window.rs, indicators/{sma,ema,rsi,atr,vwap}.rs)
 │   ├── presentation-tui/src/
@@ -291,7 +291,7 @@ pub trait SignalGenerator: Send + Sync {
 
 ## 8. Estado actual
 
-- [x] Workspace de Cargo creado (edición 2024, resolver 3, toolchain 1.94.0 fijado, MSRV 1.88).
+- [x] Workspace de Cargo creado (edición 2024, resolver 3, toolchain 1.94.0 fijado, MSRV 1.89).
 - [x] Crates base: `domain`, `application`, `presentation-tui`, `broker-paper-sim`, binario `tickforge`.
 - [x] Lints del workspace (`unsafe_code = "forbid"`, clippy contra `unwrap`/`expect`/`panic`/aritmética flotante).
 - [x] `.gitignore`, `.env.example`, `CLAUDE.md`, este documento.
@@ -354,7 +354,17 @@ pub trait SignalGenerator: Send + Sync {
 - [x] Verificado contra Alpaca paper: orden límite creada, visible, reintento idempotente, eventos `Accepted`/`Canceled` por WebSocket y cancelación.
 - [ ] Diario persistente en SQLite y reconciliación al iniciar (fase 6).
 
-**Fase 5 completa.** Siguiente: fase 6, persistencia (diario de órdenes, watchlists, reconciliación).
+**Fase 5 completa.**
+
+### Fase 6 — Persistencia
+
+- [x] Adaptador SQLite (`tickforge-adapter-sqlite`): diario de órdenes (solo se agregan filas) y watchlist, con migraciones embebidas.
+- [x] Puertos: `OrderJournal::pending_intents`, `BrokerGateway::order_by_client_order_id`, `WatchlistRepository`; entrada `JournalEntry::Reconciled`.
+- [x] `ReconcileOrdersUseCase` al iniciar: recupera órdenes que llegaron al broker antes de una caída y marca las que nunca llegaron.
+- [x] `ManageWatchlistUseCase`: watchlist guardada (con semilla en el primer arranque), agregar con `a` (verifica que haya datos) y quitar con `d`.
+- [x] Verificado contra Alpaca paper con SQLite en disco: caída simulada tras el envío → orden recuperada al reiniciar.
+
+**Fase 6 completa.** Siguiente: fase 7, robustez (reconexión con backoff, rate limits, kill switch).
 
 ## 9. Decisiones de modelado del dominio
 
@@ -481,3 +491,18 @@ pub trait SignalGenerator: Send + Sync {
 | Límites de riesgo | `.env`: `TICKFORGE_MAX_ORDER_NOTIONAL` (5000), `TICKFORGE_MAX_POSITION_NOTIONAL` (20000), `TICKFORGE_MAX_PRICE_DEVIATION_PCT` (5), `TICKFORGE_MAX_QUOTE_AGE_SECS` (15). |
 | Diario provisional | `TracingOrderJournal` escribe cada intención, envío, rechazo y cancelación en el log con destino `tickforge::journal` hasta tener SQLite (fase 6). |
 | `client_order_id` | `tf-<milisegundos>-<secuencia>`: único entre reinicios y dentro de la sesión. |
+
+## 14. Decisiones de persistencia
+
+| Concepto | Decisión |
+|---|---|
+| Motor | **`rusqlite` 0.41 con SQLite incluido (`bundled`)**, no `sqlx`. `cargo-deny` detectó RUSTSEC-2026-0459 (SQLite < 3.54) y `sqlx` 0.9 todavía no admite `libsqlite3-sys` 0.39, la primera con SQLite 3.54. `rusqlite` además evita arrastrar los controladores de MySQL y PostgreSQL. Si `sqlx` se actualiza, se puede reevaluar sin tocar los puertos. |
+| Asincronía | SQLite es síncrono: cada operación corre en `spawn_blocking` sobre una conexión compartida (`Arc<Mutex<Connection>>`), así nunca bloquea la TUI ni la red. |
+| Archivo | `data/tickforge.db` (configurable con `TICKFORGE_DATA_DIR`), ignorado por git. Modo WAL + `synchronous = NORMAL`: tolerante a cortes; al salir se hace `wal_checkpoint(TRUNCATE)` y si la app se cierra de golpe SQLite lo recupera al abrir. |
+| Migraciones | Archivos `.sql` embebidos con `include_str!` y versionados con `PRAGMA user_version`; cada una en su transacción. Una base con versión más nueva que la aplicación se rechaza con un mensaje claro. |
+| Tipos | Decimales como `TEXT` (exactos, nunca `REAL`), fechas en RFC 3339 UTC, enums con los códigos estables del dominio (`as_str`). Al leer, todo se valida otra vez con el dominio; un dato inválido es `Corrupted`, nunca un valor aproximado. |
+| Diario | Solo se agregan filas (`order_journal`): intención, rechazo de riesgo, envío, fallo de envío, cancelación y reconciliación. |
+| Intenciones pendientes | Las que no tienen `submitted` ni `reconciled`. **Incluye las de `submission_failed`**: un error de red puede ocurrir después de que el broker recibió la orden. |
+| Reconciliación | Al iniciar (antes que todo lo demás), cada intención pendiente se busca en el broker por `client_order_id`: encontrada → `FoundAtBroker` (se avisa y se refresca la cuenta); no encontrada → `NotFoundAtBroker`; sin respuesta del broker → queda pendiente para el próximo arranque. |
+| Watchlist | Tabla `watchlist` (posición, símbolo). La guardada tiene prioridad; `TICKFORGE_WATCHLIST` solo siembra el primer arranque. `a` agrega (verifica que el proveedor tenga datos del símbolo; máximo 30), `d` quita (nunca la deja vacía). Cada cambio se guarda y reabre el flujo en vivo con la lista nueva. |
+| MSRV | 1.89 (lo exige `rusqlite` 0.41). |

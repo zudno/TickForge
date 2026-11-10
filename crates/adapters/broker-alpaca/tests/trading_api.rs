@@ -380,3 +380,35 @@ async fn market_clock_is_mapped_from_new_york_time() {
     assert!(clock.is_open());
     assert_eq!(clock.time_until_next_change(), chrono::TimeDelta::hours(6));
 }
+
+#[tokio::test]
+async fn order_by_client_order_id_finds_or_reports_missing_orders() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v2/orders:by_client_order_id"))
+        .and(query_param("client_order_id", "tf-000001"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(order_json("new", "0", None)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v2/orders:by_client_order_id"))
+        .and(query_param("client_order_id", "tf-never-sent"))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_json(error_json(40410000, "order not found")),
+        )
+        .mount(&server)
+        .await;
+
+    let gateway = gateway(&server);
+    let found = gateway
+        .order_by_client_order_id(&ClientOrderId::new("tf-000001").unwrap())
+        .await
+        .unwrap();
+    let missing = gateway
+        .order_by_client_order_id(&ClientOrderId::new("tf-never-sent").unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(found.map(|order| order.status()), Some(OrderStatus::New));
+    assert_eq!(missing, None);
+}

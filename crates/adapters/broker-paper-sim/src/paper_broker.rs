@@ -331,6 +331,18 @@ impl BrokerGateway for PaperBroker {
         Ok(lock(&self.state).orders.get(order_id).cloned())
     }
 
+    async fn order_by_client_order_id(
+        &self,
+        client_order_id: &ClientOrderId,
+    ) -> Result<Option<Order>, BrokerError> {
+        let state = lock(&self.state);
+        Ok(state
+            .order_ids_by_client_id
+            .get(client_order_id)
+            .and_then(|order_id| state.orders.get(order_id))
+            .cloned())
+    }
+
     async fn submit_order(&self, request: &OrderRequest) -> Result<Order, BrokerError> {
         let now = self.clock.now();
         let mut state = lock(&self.state);

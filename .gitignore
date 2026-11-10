@@ -24,3 +24,6 @@ __pycache__/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Base de datos local (diario de órdenes, watchlist)
+/data/

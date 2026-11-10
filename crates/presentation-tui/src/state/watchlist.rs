@@ -106,6 +106,28 @@ impl Watchlist {
         (!self.rows.is_empty()).then_some(self.selected)
     }
 
+    /// Reemplaza los símbolos conservando los datos ya recibidos de los que siguen en la lista.
+    /// Si se agregó uno, queda seleccionado el último (el nuevo).
+    pub fn set_symbols(&mut self, symbols: Vec<Symbol>) {
+        let grew = symbols.len() > self.rows.len();
+        let mut previous = std::mem::take(&mut self.rows);
+        self.rows = symbols
+            .into_iter()
+            .map(|symbol| {
+                previous
+                    .iter()
+                    .position(|row| row.symbol == symbol)
+                    .map_or_else(
+                        || WatchlistRow::empty(symbol),
+                        |index| previous.swap_remove(index),
+                    )
+            })
+            .collect();
+
+        let last = self.rows.len().saturating_sub(1);
+        self.selected = if grew { last } else { self.selected.min(last) };
+    }
+
     pub fn selected_row(&self) -> Option<&WatchlistRow> {
         self.rows.get(self.selected)
     }
@@ -226,5 +248,42 @@ mod tests {
         row.bid = Some(price(dec!(10.00)));
         row.ask = Some(price(dec!(10.03)));
         assert_eq!(row.reference_price().map(Price::value), Some(dec!(10.015)));
+    }
+}
+
+#[cfg(test)]
+mod set_symbols_tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+    use tickforge_domain::market::TradeTick;
+    use tickforge_domain::shared::Quantity;
+
+    fn symbol(raw: &str) -> Symbol {
+        Symbol::new(raw).unwrap()
+    }
+
+    #[test]
+    fn keeps_known_rows_and_selects_the_added_symbol() {
+        let mut watchlist = Watchlist::new(vec![symbol("AAPL"), symbol("SPY")]);
+        watchlist.apply_event(&MarketEvent::Trade(TradeTick::new(
+            symbol("AAPL"),
+            Price::new(dec!(100)).unwrap(),
+            Quantity::new(dec!(1)).unwrap(),
+            DateTime::UNIX_EPOCH,
+        )));
+
+        watchlist.set_symbols(vec![symbol("AAPL"), symbol("SPY"), symbol("TSLA")]);
+
+        assert_eq!(watchlist.rows().len(), 3);
+        assert!(watchlist.rows()[0].last.is_some());
+        assert_eq!(watchlist.selected_index(), Some(2));
+    }
+
+    #[test]
+    fn removing_keeps_the_selection_in_range() {
+        let mut watchlist = Watchlist::new(vec![symbol("AAPL"), symbol("SPY")]);
+        watchlist.select_next();
+        watchlist.set_symbols(vec![symbol("AAPL")]);
+        assert_eq!(watchlist.selected_index(), Some(0));
     }
 }

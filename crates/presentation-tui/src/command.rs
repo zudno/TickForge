@@ -4,10 +4,13 @@ use std::sync::Arc;
 use futures::StreamExt;
 use tickforge_application::ApplicationError;
 use tickforge_application::ports::Clock;
-use tickforge_application::use_cases::market::{GetMarketClockUseCase, WatchMarketUseCase};
+use tickforge_application::use_cases::market::{
+    GetMarketClockUseCase, ManageWatchlistUseCase, WatchMarketUseCase,
+};
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
-    CancelOrderUseCase, PlaceOrderCommand, PlaceOrderUseCase, WatchOrderUpdatesUseCase,
+    CancelOrderUseCase, PlaceOrderCommand, PlaceOrderUseCase, ReconcileOrdersUseCase,
+    WatchOrderUpdatesUseCase,
 };
 use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::{OrderId, OrderRequest};
@@ -27,6 +30,15 @@ pub enum Command {
     PreviewOrder(PlaceOrderCommand),
     SubmitOrder(OrderRequest),
     CancelOrder(OrderId),
+    ReconcileOrders,
+    AddSymbol {
+        current: Vec<Symbol>,
+        symbol: Symbol,
+    },
+    RemoveSymbol {
+        current: Vec<Symbol>,
+        symbol: Symbol,
+    },
 }
 
 /// Casos de uso que la TUI necesita. Los construye el composition root.
@@ -35,9 +47,11 @@ pub struct TuiServices {
     pub portfolio: Arc<GetPortfolioSnapshotUseCase>,
     pub watch_market: Arc<WatchMarketUseCase>,
     pub market_clock: Arc<GetMarketClockUseCase>,
+    pub watchlist: Arc<ManageWatchlistUseCase>,
     pub place_order: Arc<PlaceOrderUseCase>,
     pub cancel_order: Arc<CancelOrderUseCase>,
     pub order_updates: Arc<WatchOrderUpdatesUseCase>,
+    pub reconcile_orders: Arc<ReconcileOrdersUseCase>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -121,6 +135,45 @@ impl CommandExecutor {
                             tracing::warn!(%error, %order_id, "no se pudo cancelar la orden");
                             Action::OrderCancelFailed(describe(&error))
                         }
+                    }
+                });
+            }
+            Command::ReconcileOrders => {
+                let use_case = Arc::clone(&services.reconcile_orders);
+                self.spawn(async move {
+                    match use_case.execute().await {
+                        Ok(report) => {
+                            tracing::info!(
+                                checked = report.checked,
+                                recovered = report.recovered.len(),
+                                not_submitted = report.not_submitted.len(),
+                                unresolved = report.unresolved.len(),
+                                "reconciliación terminada"
+                            );
+                            Action::ReconciliationFinished(report)
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "no se pudo reconciliar el diario");
+                            Action::ReconciliationFailed(describe(&error))
+                        }
+                    }
+                });
+            }
+            Command::AddSymbol { current, symbol } => {
+                let use_case = Arc::clone(&services.watchlist);
+                self.spawn(async move {
+                    match use_case.add(&current, symbol).await {
+                        Ok(symbols) => Action::WatchlistChanged(symbols),
+                        Err(error) => Action::WatchlistChangeFailed(describe(&error)),
+                    }
+                });
+            }
+            Command::RemoveSymbol { current, symbol } => {
+                let use_case = Arc::clone(&services.watchlist);
+                self.spawn(async move {
+                    match use_case.remove(&current, &symbol).await {
+                        Ok(symbols) => Action::WatchlistChanged(symbols),
+                        Err(error) => Action::WatchlistChangeFailed(describe(&error)),
                     }
                 });
             }

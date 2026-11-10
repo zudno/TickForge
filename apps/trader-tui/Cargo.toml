@@ -15,6 +15,7 @@ tickforge-domain.workspace = true
 tickforge-application.workspace = true
 tickforge-presentation-tui.workspace = true
 tickforge-adapter-alpaca.workspace = true
+tickforge-adapter-sqlite.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 async-trait.workspace = true
 rust_decimal.workspace = true

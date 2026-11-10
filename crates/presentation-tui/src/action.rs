@@ -2,8 +2,9 @@ use chrono::{DateTime, Utc};
 use tickforge_application::ports::{MarketEvent, OrderUpdate};
 use tickforge_application::use_cases::market::SymbolSnapshot;
 use tickforge_application::use_cases::portfolio::PortfolioSnapshot;
-use tickforge_application::use_cases::trading::OrderPreview;
+use tickforge_application::use_cases::trading::{OrderPreview, ReconciliationReport};
 use tickforge_domain::market::MarketClock;
+use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::{Order, OrderId, OrderSide};
 
 /// Todo lo que puede cambiar el estado de la TUI: intenciones del usuario (teclado)
@@ -30,6 +31,12 @@ pub enum Action {
     TicketBackspace,
     RequestCancelSelected,
 
+    // --- Usuario: watchlist ---
+    OpenAddSymbol,
+    AddSymbolInput(char),
+    AddSymbolBackspace,
+    RemoveSelectedSymbol,
+
     // --- Tiempo ---
     Tick(DateTime<Utc>),
 
@@ -55,4 +62,10 @@ pub enum Action {
     OrderUpdateReceived(OrderUpdate),
     OrderStreamConnected,
     OrderStreamDisconnected(String),
+
+    // --- Persistencia ---
+    WatchlistChanged(Vec<Symbol>),
+    WatchlistChangeFailed(String),
+    ReconciliationFinished(ReconciliationReport),
+    ReconciliationFailed(String),
 }

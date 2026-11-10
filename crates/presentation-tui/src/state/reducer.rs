@@ -1,5 +1,6 @@
 use chrono::{DateTime, TimeDelta, Utc};
 use tickforge_application::ports::{OrderUpdate, OrderUpdateKind};
+use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::OrderSide;
 
 use crate::action::Action;
@@ -7,7 +8,7 @@ use crate::command::Command;
 use crate::labels;
 use crate::state::{
     AppState, CancelConfirmation, NotificationLevel, OrderTicket, Overlay, Panel, PreviewOverlay,
-    StreamStatus,
+    StreamStatus, SymbolInput,
 };
 
 /// Cada cuánto se refresca el portafolio por REST (posiciones, saldos).
@@ -24,6 +25,8 @@ pub fn initial_commands(state: &mut AppState) -> Vec<Command> {
     state.last_portfolio_request = Some(state.now);
     state.last_clock_request = Some(state.now);
     vec![
+        // Primero: resolver órdenes que pudieron quedar a medias en la sesión anterior
+        Command::ReconcileOrders,
         Command::LoadPortfolio,
         Command::LoadMarketClock,
         Command::StartMarketStream(state.watchlist.symbols()),
@@ -66,6 +69,74 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
         Action::TicketInput(character) => with_ticket(state, |ticket| ticket.input(character)),
         Action::TicketBackspace => with_ticket(state, OrderTicket::backspace),
         Action::RequestCancelSelected => request_cancel(state),
+
+        // --- Watchlist ---
+        Action::OpenAddSymbol => {
+            if state.overlay == Overlay::None {
+                state.overlay = Overlay::AddSymbol(SymbolInput::default());
+            }
+        }
+        Action::AddSymbolInput(character) => {
+            with_symbol_input(state, |input| input.input(character))
+        }
+        Action::AddSymbolBackspace => with_symbol_input(state, SymbolInput::backspace),
+        Action::RemoveSelectedSymbol => return remove_selected_symbol(state),
+        Action::WatchlistChanged(symbols) => {
+            if matches!(state.overlay, Overlay::AddSymbol(_)) {
+                state.overlay = Overlay::None;
+            }
+            state.watchlist.set_symbols(symbols.clone());
+            state.notifications.push(
+                now,
+                NotificationLevel::Info,
+                format!("Watchlist guardada ({} símbolos)", symbols.len()),
+            );
+            // El flujo en vivo se vuelve a abrir con la lista nueva (una sola conexión)
+            state.stream_status = StreamStatus::Connecting;
+            return vec![Command::StartMarketStream(symbols)];
+        }
+        Action::WatchlistChangeFailed(reason) => {
+            if let Overlay::AddSymbol(input) = &mut state.overlay {
+                input.awaiting = false;
+                input.error = Some(reason);
+            } else {
+                state
+                    .notifications
+                    .push(now, NotificationLevel::Error, reason);
+            }
+        }
+
+        // --- Reconciliación ---
+        Action::ReconciliationFinished(report) => {
+            if report.is_clean() {
+                return Vec::new();
+            }
+            let level = if report.unresolved.is_empty() {
+                NotificationLevel::Info
+            } else {
+                NotificationLevel::Warning
+            };
+            let mut message = format!(
+                "Reconciliación: {} recuperadas del broker, {} nunca llegaron",
+                report.recovered.len(),
+                report.not_submitted.len()
+            );
+            if !report.unresolved.is_empty() {
+                message.push_str(&format!(
+                    ", {} sin verificar (se reintentará al reiniciar)",
+                    report.unresolved.len()
+                ));
+            }
+            state.notifications.push(now, level, message);
+            if !report.recovered.is_empty() {
+                return refresh_portfolio_now(state);
+            }
+        }
+        Action::ReconciliationFailed(reason) => state.notifications.push(
+            now,
+            NotificationLevel::Error,
+            format!("No se pudo reconciliar el diario de órdenes: {reason}"),
+        ),
 
         Action::Tick(instant) => return tick(state, instant),
 
@@ -237,6 +308,28 @@ fn open_ticket(state: &mut AppState, side: OrderSide) {
     state.overlay = Overlay::Ticket(OrderTicket::new(row.symbol.clone(), side, row.bid, row.ask));
 }
 
+fn with_symbol_input(state: &mut AppState, update: impl FnOnce(&mut SymbolInput)) {
+    if let Overlay::AddSymbol(input) = &mut state.overlay
+        && !input.awaiting
+    {
+        update(input);
+    }
+}
+
+/// `d` con la watchlist enfocada: quita el símbolo seleccionado.
+fn remove_selected_symbol(state: &mut AppState) -> Vec<Command> {
+    if state.overlay != Overlay::None || state.focus != Panel::Watchlist {
+        return Vec::new();
+    }
+    let Some(row) = state.watchlist.selected_row() else {
+        return Vec::new();
+    };
+    vec![Command::RemoveSymbol {
+        current: state.watchlist.symbols(),
+        symbol: row.symbol.clone(),
+    }]
+}
+
 fn request_cancel(state: &mut AppState) {
     if state.overlay != Overlay::None || state.focus != Panel::Orders {
         return;
@@ -260,15 +353,37 @@ fn close_overlay(state: &mut AppState) {
         }
         Overlay::Preview(preview) => Overlay::Preview(preview),
         Overlay::Ticket(ticket) if ticket.awaiting_preview => Overlay::Ticket(ticket),
-        Overlay::None | Overlay::Help | Overlay::Ticket(_) | Overlay::CancelConfirm(_) => {
-            Overlay::None
-        }
+        Overlay::AddSymbol(input) if input.awaiting => Overlay::AddSymbol(input),
+        Overlay::None
+        | Overlay::Help
+        | Overlay::Ticket(_)
+        | Overlay::CancelConfirm(_)
+        | Overlay::AddSymbol(_) => Overlay::None,
     };
 }
 
 /// `Enter`: ticket → vista previa → envío; confirmación de cancelación → cancelar.
 fn confirm(state: &mut AppState) -> Vec<Command> {
+    let current_symbols = state.watchlist.symbols();
     match &mut state.overlay {
+        Overlay::AddSymbol(input) if !input.awaiting => match Symbol::new(&input.text) {
+            Ok(symbol) => {
+                input.awaiting = true;
+                input.error = None;
+                vec![Command::AddSymbol {
+                    current: current_symbols,
+                    symbol,
+                }]
+            }
+            Err(_) if input.text.is_empty() => {
+                input.error = Some("Escribe un símbolo, por ejemplo TSLA".to_owned());
+                Vec::new()
+            }
+            Err(_) => {
+                input.error = Some(format!("'{}' no es un símbolo válido", input.text));
+                Vec::new()
+            }
+        },
         Overlay::Ticket(ticket) if !ticket.awaiting_preview => match ticket.to_command() {
             Ok(command) => {
                 ticket.awaiting_preview = true;

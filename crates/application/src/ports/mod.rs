@@ -9,10 +9,12 @@ mod clock;
 mod event_publisher;
 mod market_data_feed;
 mod order_journal;
+mod watchlist_repository;
 
 pub use broker_gateway::{BrokerError, BrokerGateway, OrderUpdate, OrderUpdateKind};
 pub use client_order_id_generator::ClientOrderIdGenerator;
 pub use clock::Clock;
 pub use event_publisher::{ApplicationEvent, EventPublisher};
 pub use market_data_feed::{MarketDataError, MarketDataFeed, MarketEvent};
-pub use order_journal::{JournalEntry, JournalError, OrderJournal};
+pub use order_journal::{JournalEntry, JournalError, OrderJournal, ReconcileOutcome};
+pub use watchlist_repository::{RepositoryError, WatchlistRepository};

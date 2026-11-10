@@ -282,3 +282,20 @@ mod orders {
         insta::assert_snapshot!("cancel_confirmation", draw(&state));
     }
 }
+
+#[test]
+fn renders_add_symbol_dialog_with_error() {
+    let mut state = loaded_state();
+    reduce(&mut state, Action::OpenAddSymbol);
+    for character in "zzzz".chars() {
+        reduce(&mut state, Action::AddSymbolInput(character));
+    }
+    reduce(&mut state, Action::Confirm);
+    reduce(
+        &mut state,
+        Action::WatchlistChangeFailed(
+            "no hay datos de mercado para ZZZZ; revisa que el símbolo exista".to_owned(),
+        ),
+    );
+    insta::assert_snapshot!(draw(&state));
+}

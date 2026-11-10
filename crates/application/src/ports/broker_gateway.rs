@@ -6,7 +6,9 @@ use tickforge_domain::DomainError;
 use tickforge_domain::market::MarketClock;
 use tickforge_domain::portfolio::{Account, Position};
 use tickforge_domain::shared::Symbol;
-use tickforge_domain::trading::{Fill, Order, OrderEvent, OrderId, OrderRequest, OrderStatus};
+use tickforge_domain::trading::{
+    ClientOrderId, Fill, Order, OrderEvent, OrderId, OrderRequest, OrderStatus,
+};
 
 /// Puerto de ejecución: lo implementa cada broker (Alpaca, IBKR, simulador).
 #[async_trait]
@@ -22,6 +24,13 @@ pub trait BrokerGateway: Send + Sync {
 
     /// Orden por id; `None` si el broker no la conoce.
     async fn order(&self, order_id: &OrderId) -> Result<Option<Order>, BrokerError>;
+
+    /// Orden por el id que asignó TickForge; `None` si nunca llegó al broker.
+    /// Es la base de la reconciliación al iniciar.
+    async fn order_by_client_order_id(
+        &self,
+        client_order_id: &ClientOrderId,
+    ) -> Result<Option<Order>, BrokerError>;
 
     /// Envía la orden. El `ClientOrderId` de la solicitud garantiza que un reintento
     /// no cree una orden duplicada.

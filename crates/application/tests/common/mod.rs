@@ -11,12 +11,13 @@ use chrono::{DateTime, TimeDelta, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use tickforge_adapter_paper_sim::{
-    InMemoryOrderJournal, ManualClock, PaperBroker, RecordingEventPublisher,
-    SequentialClientOrderIdGenerator,
+    InMemoryOrderJournal, InMemoryWatchlistRepository, ManualClock, PaperBroker,
+    RecordingEventPublisher, SequentialClientOrderIdGenerator,
 };
+use tickforge_application::use_cases::market::ManageWatchlistUseCase;
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
-    CancelOrderUseCase, PlaceOrderCommand, PlaceOrderUseCase, TradingPorts,
+    CancelOrderUseCase, PlaceOrderCommand, PlaceOrderUseCase, ReconcileOrdersUseCase, TradingPorts,
 };
 use tickforge_domain::market::Quote;
 use tickforge_domain::risk::{RiskLimits, RiskPolicy};
@@ -33,6 +34,9 @@ pub struct Harness {
     pub place_order: PlaceOrderUseCase,
     pub cancel_order: CancelOrderUseCase,
     pub portfolio: GetPortfolioSnapshotUseCase,
+    pub reconcile_orders: ReconcileOrdersUseCase,
+    pub watchlist_repository: Arc<InMemoryWatchlistRepository>,
+    pub watchlist: ManageWatchlistUseCase,
 }
 
 impl Harness {
@@ -43,6 +47,7 @@ impl Harness {
         let broker = Arc::new(PaperBroker::new(clock.clone(), Money::usd(dec!(10000))));
         let journal = Arc::new(InMemoryOrderJournal::new());
         let events = Arc::new(RecordingEventPublisher::new());
+        let watchlist_repository = Arc::new(InMemoryWatchlistRepository::new());
 
         let ports = TradingPorts {
             broker: broker.clone(),
@@ -62,7 +67,10 @@ impl Harness {
 
         Self {
             place_order: PlaceOrderUseCase::new(ports.clone(), RiskPolicy::new(limits)),
-            cancel_order: CancelOrderUseCase::new(ports),
+            cancel_order: CancelOrderUseCase::new(ports.clone()),
+            reconcile_orders: ReconcileOrdersUseCase::new(ports),
+            watchlist: ManageWatchlistUseCase::new(watchlist_repository.clone(), broker.clone()),
+            watchlist_repository,
             portfolio: GetPortfolioSnapshotUseCase::new(broker.clone()),
             clock,
             broker,

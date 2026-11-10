@@ -74,9 +74,12 @@ Workspace de Cargo con un crate por capa. El compilador hace cumplir las depende
 - Pruebas contra servicios reales (por ejemplo `paper_smoke`): siempre `#[ignore]`, solo lectura,
   con salvaguarda de entorno paper. Se ejecutan a mano:
   `cargo test -p tickforge-adapter-alpaca --test paper_smoke -- --ignored --nocapture`.
-- Única excepción de escritura: `paper_orders_smoke` coloca una compra límite de 1 acción muy
-  por debajo del mercado y la cancela de inmediato, solo en paper. Cualquier prueba nueva que
-  escriba en la cuenta debe seguir esas mismas garantías (no ejecutable, cancelada, paper).
+- Excepciones de escritura: `paper_orders_smoke` (adaptador de Alpaca) y `paper_reconcile_smoke`
+  (`apps/trader-tui/tests/`, con SQLite en disco) colocan una compra límite de 1 acción muy por
+  debajo del mercado y la cancelan, solo en paper. Cualquier prueba nueva que escriba en la
+  cuenta debe seguir esas mismas garantías (no ejecutable, cancelada, paper).
+- Persistencia: pruebas del adaptador SQLite en memoria y con un archivo temporal real
+  (verifica que los datos sobrevivan a cerrar y reabrir).
 
 ## Comandos
 
@@ -107,6 +110,6 @@ también (si una licencia nueva es necesaria, agregarla a `deny.toml` con justif
 ## Entorno
 
 - Windows 11, toolchain fijado en `rust-toolchain.toml` (1.94.0, edición 2024, resolver 3).
-- MSRV (`rust-version` del workspace): 1.88. Con `resolver = "3"` Cargo elige versiones compatibles
+- MSRV (`rust-version` del workspace): 1.89 (lo exige `rusqlite` 0.41). Con `resolver = "3"` Cargo elige versiones compatibles
   con el MSRV declarado; si una corrección de seguridad exige un Rust más nuevo, hay que subirlo.
 - La carpeta `ml/` (Python) queda fuera del workspace de Rust.
