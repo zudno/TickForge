@@ -529,3 +529,132 @@ fn reconciliation_results_are_reported_only_when_something_was_pending() {
     // Hay órdenes recuperadas: se refresca la cuenta para mostrarlas
     assert_eq!(commands, vec![Command::LoadPortfolio]);
 }
+
+// --- Reconexión y datos congelados (fase 7) ---
+
+fn open_market(state: &mut AppState) {
+    reduce(
+        state,
+        Action::MarketClockLoaded(
+            tickforge_domain::market::MarketClock::new(at(1_000), true, at(100_000), at(20_000))
+                .unwrap(),
+        ),
+    );
+}
+
+#[test]
+fn a_lost_stream_shows_the_retry_countdown_and_warns_only_once() {
+    let mut state = state();
+    reduce(&mut state, Action::StreamConnected);
+
+    reduce(&mut state, Action::StreamDisconnected("timeout".to_owned()));
+    reduce(
+        &mut state,
+        Action::StreamReconnecting {
+            attempt: 1,
+            delay: std::time::Duration::from_secs(2),
+        },
+    );
+    assert_eq!(
+        state.stream_status,
+        StreamStatus::Reconnecting {
+            attempt: 1,
+            retry_at: at(1_002)
+        }
+    );
+    let warning = state.notifications.latest().unwrap().message.clone();
+    assert!(warning.contains("Reconectando"));
+
+    // Un intento fallido más no repite el aviso
+    reduce(&mut state, Action::StreamDisconnected("timeout".to_owned()));
+    assert_eq!(state.notifications.latest().unwrap().message, warning);
+
+    reduce(&mut state, Action::StreamConnected);
+    assert_eq!(state.stream_status, StreamStatus::Live);
+    assert_eq!(
+        state.notifications.latest().unwrap().message,
+        "Datos en tiempo real reconectados"
+    );
+}
+
+#[test]
+fn order_stream_reconnection_resyncs_the_account() {
+    let mut state = state();
+    // Primera conexión: nada que sincronizar
+    assert!(reduce(&mut state, Action::OrderStreamConnected).is_empty());
+
+    reduce(
+        &mut state,
+        Action::OrderStreamDisconnected("cerrado".to_owned()),
+    );
+    // Reconexión: pudo haber ejecuciones mientras estuvo caído
+    assert_eq!(
+        reduce(&mut state, Action::OrderStreamConnected),
+        vec![Command::LoadPortfolio]
+    );
+}
+
+#[test]
+fn refresh_retries_a_reconnecting_stream_immediately() {
+    let mut state = state();
+    state.stream_status = StreamStatus::Reconnecting {
+        attempt: 4,
+        retry_at: at(1_060),
+    };
+
+    let commands = reduce(&mut state, Action::Refresh);
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::StartMarketStream(_)))
+    );
+    assert_eq!(state.stream_status, StreamStatus::Connecting);
+}
+
+#[test]
+fn a_silent_stream_during_market_hours_is_restarted() {
+    let mut state = state();
+    initial_commands(&mut state);
+    open_market(&mut state);
+    reduce(&mut state, Action::StreamConnected);
+
+    // Dos minutos sin datos aún no bastan
+    let commands = reduce(&mut state, Action::Tick(at(1_110)));
+    assert!(
+        !commands
+            .iter()
+            .any(|c| matches!(c, Command::StartMarketStream(_)))
+    );
+
+    let commands = reduce(&mut state, Action::Tick(at(1_121)));
+    assert!(
+        commands
+            .iter()
+            .any(|c| matches!(c, Command::StartMarketStream(_)))
+    );
+    assert_eq!(state.stream_status, StreamStatus::Connecting);
+    assert!(
+        state
+            .notifications
+            .latest()
+            .unwrap()
+            .message
+            .contains("Sin datos de mercado")
+    );
+}
+
+#[test]
+fn silence_with_the_market_closed_is_normal() {
+    let mut state = state();
+    initial_commands(&mut state);
+    reduce(&mut state, Action::StreamConnected);
+
+    // Sin reloj de mercado abierto (cerrado o desconocido) no se fuerza la reconexión
+    let commands = reduce(&mut state, Action::Tick(at(5_000)));
+    assert!(
+        !commands
+            .iter()
+            .any(|c| matches!(c, Command::StartMarketStream(_)))
+    );
+    assert_eq!(state.stream_status, StreamStatus::Live);
+}

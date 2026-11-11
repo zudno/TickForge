@@ -72,17 +72,39 @@ fn market_session(state: &AppState) -> Vec<Span<'static>> {
 /// Estado combinado de las dos conexiones en tiempo real (datos y órdenes): se muestra el
 /// problema más importante, o "En vivo" si ambas funcionan.
 fn connections(state: &AppState) -> Span<'static> {
+    let down = Style::new().fg(theme::NEGATIVE);
+    let retrying = Style::new().fg(theme::WARNING);
     match (&state.stream_status, &state.order_stream_status) {
-        (StreamStatus::Disconnected(_), _) => {
-            Span::styled("✕ Sin datos en vivo", Style::new().fg(theme::NEGATIVE))
-        }
-        (_, StreamStatus::Disconnected(_)) => {
-            Span::styled("✕ Órdenes sin conexión", Style::new().fg(theme::NEGATIVE))
-        }
+        (StreamStatus::Reconnecting { attempt, retry_at }, _) => Span::styled(
+            format!(
+                "↻ Datos: reintento {attempt} {}",
+                countdown(state, *retry_at)
+            ),
+            retrying,
+        ),
+        (_, StreamStatus::Reconnecting { attempt, retry_at }) => Span::styled(
+            format!(
+                "↻ Órdenes: reintento {attempt} {}",
+                countdown(state, *retry_at)
+            ),
+            retrying,
+        ),
+        (StreamStatus::Disconnected(_), _) => Span::styled("✕ Sin datos en vivo", down),
+        (_, StreamStatus::Disconnected(_)) => Span::styled("✕ Órdenes sin conexión", down),
         (StreamStatus::Live, StreamStatus::Live) => {
             Span::styled("● En vivo", Style::new().fg(theme::POSITIVE))
         }
         _ => Span::styled("○ Conectando…", theme::muted()),
+    }
+}
+
+/// "en 8s" mientras se espera; "ahora" cuando ya toca reintentar.
+fn countdown(state: &AppState, retry_at: chrono::DateTime<chrono::Utc>) -> String {
+    let remaining = retry_at.signed_duration_since(state.now).num_seconds();
+    if remaining > 0 {
+        format!("en {remaining}s")
+    } else {
+        "ahora".to_owned()
     }
 }
 

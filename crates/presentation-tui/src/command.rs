@@ -1,9 +1,11 @@
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::StreamExt;
 use tickforge_application::ApplicationError;
 use tickforge_application::ports::Clock;
+use tickforge_application::resilience::ExponentialBackoff;
 use tickforge_application::use_cases::market::{
     GetMarketClockUseCase, ManageWatchlistUseCase, WatchMarketUseCase,
 };
@@ -16,6 +18,7 @@ use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::{OrderId, OrderRequest};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::action::Action;
 
@@ -231,65 +234,154 @@ fn describe(error: &ApplicationError) -> String {
     }
 }
 
+/// Una conexión se considera sana si entregó datos o duró al menos esto. Solo entonces se
+/// reinicia la cuenta de reintentos: un servidor que acepta y corta de inmediato sigue
+/// recibiendo esperas cada vez más largas.
+const HEALTHY_CONNECTION: Duration = Duration::from_secs(60);
+
+/// Cómo terminó una conexión del flujo.
+enum StreamEnd {
+    /// La TUI se está cerrando: no hay que reconectar.
+    Shutdown,
+    /// Se perdió la conexión (o no se pudo abrir).
+    Lost { reason: String, healthy: bool },
+}
+
+/// Flujo de mercado con reconexión automática y espera exponencial entre intentos.
+/// Cada reconexión vuelve a cargar la foto inicial, así no quedan huecos de datos.
 async fn run_market_stream(
     use_case: Arc<WatchMarketUseCase>,
     symbols: Vec<Symbol>,
     actions: UnboundedSender<Action>,
 ) {
-    let snapshot = use_case.snapshot(&symbols).await;
-    if actions.send(Action::WatchlistSeeded(snapshot)).is_err() {
-        return;
+    let backoff = ExponentialBackoff::streaming();
+    let mut attempt: u32 = 0;
+    loop {
+        match market_connection(&use_case, &symbols, &actions).await {
+            StreamEnd::Shutdown => return,
+            StreamEnd::Lost { reason, healthy } => {
+                if healthy {
+                    attempt = 0;
+                }
+                attempt = attempt.saturating_add(1);
+                let delay = backoff.delay(attempt);
+                tracing::warn!(%reason, attempt, ?delay, "flujo de mercado perdido; se reconectará");
+                // Si la TUI se cerró, el canal ya no existe y no hay que reconectar
+                if actions.send(Action::StreamDisconnected(reason)).is_err()
+                    || actions
+                        .send(Action::StreamReconnecting { attempt, delay })
+                        .is_err()
+                {
+                    return;
+                }
+                tokio::time::sleep(delay).await;
+            }
+        }
     }
+}
 
-    let mut events = match use_case.stream(&symbols).await {
+async fn market_connection(
+    use_case: &WatchMarketUseCase,
+    symbols: &[Symbol],
+    actions: &UnboundedSender<Action>,
+) -> StreamEnd {
+    let snapshot = use_case.snapshot(symbols).await;
+    if actions.send(Action::WatchlistSeeded(snapshot)).is_err() {
+        return StreamEnd::Shutdown;
+    }
+    let mut events = match use_case.stream(symbols).await {
         Ok(events) => events,
         Err(error) => {
-            tracing::warn!(%error, "no se pudo abrir el flujo de mercado");
-            let _ = actions.send(Action::StreamDisconnected(describe(&error)));
-            return;
+            return StreamEnd::Lost {
+                reason: describe(&error),
+                healthy: false,
+            };
         }
     };
     if actions.send(Action::StreamConnected).is_err() {
-        return;
+        return StreamEnd::Shutdown;
     }
     tracing::info!(symbols = symbols.len(), "flujo de mercado conectado");
 
+    let connected_at = Instant::now();
+    let mut received = false;
     while let Some(event) = events.next().await {
+        received = true;
         if actions.send(Action::Market(event)).is_err() {
-            return;
+            return StreamEnd::Shutdown;
         }
     }
-    tracing::warn!("el flujo de mercado se cerró");
-    let _ = actions.send(Action::StreamDisconnected(
-        "el servidor cerró la conexión".to_owned(),
-    ));
+    StreamEnd::Lost {
+        reason: "el servidor cerró la conexión".to_owned(),
+        healthy: received || connected_at.elapsed() >= HEALTHY_CONNECTION,
+    }
 }
 
+/// Flujo de actualizaciones de órdenes con reconexión automática.
 async fn run_order_stream(
     use_case: Arc<WatchOrderUpdatesUseCase>,
     actions: UnboundedSender<Action>,
 ) {
+    let backoff = ExponentialBackoff::streaming();
+    let mut attempt: u32 = 0;
+    loop {
+        match order_connection(&use_case, &actions).await {
+            StreamEnd::Shutdown => return,
+            StreamEnd::Lost { reason, healthy } => {
+                if healthy {
+                    attempt = 0;
+                }
+                attempt = attempt.saturating_add(1);
+                let delay = backoff.delay(attempt);
+                tracing::warn!(%reason, attempt, ?delay, "flujo de órdenes perdido; se reconectará");
+                if actions
+                    .send(Action::OrderStreamDisconnected(reason))
+                    .is_err()
+                    || actions
+                        .send(Action::OrderStreamReconnecting { attempt, delay })
+                        .is_err()
+                {
+                    return;
+                }
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
+async fn order_connection(
+    use_case: &WatchOrderUpdatesUseCase,
+    actions: &UnboundedSender<Action>,
+) -> StreamEnd {
     let mut updates = match use_case.stream().await {
         Ok(updates) => updates,
         Err(error) => {
-            tracing::warn!(%error, "no se pudo abrir el flujo de órdenes");
-            let _ = actions.send(Action::OrderStreamDisconnected(describe(&error)));
-            return;
+            return StreamEnd::Lost {
+                reason: describe(&error),
+                healthy: false,
+            };
         }
     };
     if actions.send(Action::OrderStreamConnected).is_err() {
-        return;
+        return StreamEnd::Shutdown;
     }
     tracing::info!("flujo de actualizaciones de órdenes conectado");
 
+    // Las órdenes pueden pasar horas sin eventos: la conexión cuenta como sana por duración
+    let connected_at = Instant::now();
+    let mut received = false;
     while let Some(update) = updates.next().await {
+        received = true;
         tracing::info!(order_id = %update.order_id, kind = ?update.kind, "actualización de orden");
         if actions.send(Action::OrderUpdateReceived(update)).is_err() {
-            return;
+            return StreamEnd::Shutdown;
         }
     }
-    tracing::warn!("el flujo de órdenes se cerró");
-    let _ = actions.send(Action::OrderStreamDisconnected(
-        "el servidor cerró la conexión".to_owned(),
-    ));
+    StreamEnd::Lost {
+        reason: "el servidor cerró la conexión".to_owned(),
+        healthy: received || connected_at.elapsed() >= HEALTHY_CONNECTION,
+    }
 }
+
+#[cfg(test)]
+mod tests;

@@ -299,3 +299,17 @@ fn renders_add_symbol_dialog_with_error() {
     );
     insta::assert_snapshot!(draw(&state));
 }
+
+#[test]
+fn status_bar_shows_the_reconnection_countdown() {
+    let mut state = loaded_state();
+    reduce(&mut state, Action::StreamDisconnected("timeout".to_owned()));
+    reduce(
+        &mut state,
+        Action::StreamReconnecting {
+            attempt: 3,
+            delay: std::time::Duration::from_secs(8),
+        },
+    );
+    assert!(draw(&state).contains("↻ Datos: reintento 3 en 8s"));
+}

@@ -292,11 +292,13 @@ async fn transient_failures_are_retryable() {
 #[tokio::test]
 async fn unreachable_broker_is_unavailable() {
     // Puerto 9 (discard) cerrado en local: falla de conexión, no de HTTP
-    let config = AlpacaConfig::paper(AlpacaCredentials::new(
+    let mut config = AlpacaConfig::paper(AlpacaCredentials::new(
         KEY_ID.to_owned(),
         SECRET_KEY.to_owned(),
     ))
     .with_base_urls("http://127.0.0.1:9", "http://127.0.0.1:9");
+    // Sin reintentos: en Windows cada conexión rechazada tarda ~2 s
+    config.max_retries = 0;
     let gateway = AlpacaBrokerGateway::new(&config).unwrap();
 
     assert!(matches!(
@@ -411,4 +413,119 @@ async fn order_by_client_order_id_finds_or_reports_missing_orders() {
 
     assert_eq!(found.map(|order| order.status()), Some(OrderStatus::New));
     assert_eq!(missing, None);
+}
+
+// --- Reintentos (fase 7) ---
+
+fn account_json() -> serde_json::Value {
+    json!({
+        "currency": "USD", "cash": "100", "equity": "100", "last_equity": "100",
+        "buying_power": "100", "trading_blocked": false, "account_blocked": false
+    })
+}
+
+#[tokio::test]
+async fn transient_errors_are_retried_until_the_request_succeeds() {
+    let server = MockServer::start().await;
+    // Las dos primeras respuestas fallan; la tercera funciona
+    Mock::given(method("GET"))
+        .and(path("/v2/account"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("mantenimiento"))
+        .up_to_n_times(2)
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v2/account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(account_json()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let account = gateway(&server).account().await.unwrap();
+    assert_eq!(account.cash(), Money::usd(dec!(100)));
+}
+
+#[tokio::test]
+async fn rate_limit_responses_wait_for_retry_after() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v2/account"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "1")
+                .set_body_json(error_json(42910000, "rate limit exceeded")),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v2/account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(account_json()))
+        .mount(&server)
+        .await;
+
+    let start = std::time::Instant::now();
+    gateway(&server).account().await.unwrap();
+    assert!(start.elapsed() >= std::time::Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn submitting_an_order_is_retried_safely() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v2/orders"))
+        .respond_with(ResponseTemplate::new(502).set_body_string("bad gateway"))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    // El reintento lleva el mismo client_order_id
+    Mock::given(method("POST"))
+        .and(path("/v2/orders"))
+        .and(wiremock::matchers::body_partial_json(
+            json!({ "client_order_id": "tf-000001" }),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(order_json("new", "0", None)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let order = gateway(&server)
+        .submit_order(&limit_request())
+        .await
+        .unwrap();
+    assert_eq!(order.status(), OrderStatus::New);
+}
+
+#[tokio::test]
+async fn cancellations_are_never_retried() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/v2/orders/live-order"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("mantenimiento"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let result = gateway(&server)
+        .cancel_order(&OrderId::new("live-order").unwrap())
+        .await;
+    assert!(matches!(result, Err(BrokerError::Unavailable(_))));
+}
+
+#[tokio::test]
+async fn client_errors_are_not_retried() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v2/orders"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .set_body_json(error_json(40310000, "insufficient buying power")),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let result = gateway(&server).submit_order(&limit_request()).await;
+    assert!(matches!(result, Err(BrokerError::Rejected { .. })));
 }

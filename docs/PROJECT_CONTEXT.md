@@ -364,7 +364,17 @@ pub trait SignalGenerator: Send + Sync {
 - [x] `ManageWatchlistUseCase`: watchlist guardada (con semilla en el primer arranque), agregar con `a` (verifica que haya datos) y quitar con `d`.
 - [x] Verificado contra Alpaca paper con SQLite en disco: caída simulada tras el envío → orden recuperada al reiniciar.
 
-**Fase 6 completa.** Siguiente: fase 7, robustez (reconexión con backoff, rate limits, kill switch).
+**Fase 6 completa.**
+
+### Fase 7 — Robustez
+
+- [x] Ya cubiertos antes: idempotencia por `client_order_id`, restauración de la terminal ante pánicos, cierre ordenado de la base, reconciliación al iniciar.
+- [x] Reconexión automática de ambos flujos (datos y órdenes) con espera exponencial; la conexión cuenta como sana si entregó datos o duró 1 minuto.
+- [x] Resincronización: al reconectar el flujo de órdenes se recarga la cuenta por REST; al reconectar el de mercado se recarga la foto inicial.
+- [x] Reintentos HTTP para errores pasajeros (red, 429, 5xx), respetando `Retry-After`; nunca para cancelaciones ni errores 4xx.
+- [x] Limitador de peticiones del lado del cliente (190/min por API).
+- [x] Detección de flujo congelado: 2 minutos sin datos con el mercado abierto fuerza la reconexión.
+- [ ] Kill switch: cancelar todas las órdenes abiertas y bloquear órdenes nuevas (segundo PR de la fase 7).
 
 ## 9. Decisiones de modelado del dominio
 
@@ -506,3 +516,16 @@ pub trait SignalGenerator: Send + Sync {
 | Reconciliación | Al iniciar (antes que todo lo demás), cada intención pendiente se busca en el broker por `client_order_id`: encontrada → `FoundAtBroker` (se avisa y se refresca la cuenta); no encontrada → `NotFoundAtBroker`; sin respuesta del broker → queda pendiente para el próximo arranque. |
 | Watchlist | Tabla `watchlist` (posición, símbolo). La guardada tiene prioridad; `TICKFORGE_WATCHLIST` solo siembra el primer arranque. `a` agrega (verifica que el proveedor tenga datos del símbolo; máximo 30), `d` quita (nunca la deja vacía). Cada cambio se guarda y reabre el flujo en vivo con la lista nueva. |
 | MSRV | 1.89 (lo exige `rusqlite` 0.41). |
+
+## 15. Decisiones de robustez
+
+| Concepto | Decisión |
+|---|---|
+| Espera exponencial | `ExponentialBackoff` en `application::resilience` (pura, sin `tokio`): flujos 1 s → 60 s; peticiones REST 250 ms → 4 s. La usan el adaptador HTTP y la TUI. |
+| Reconexión de flujos | Bucle en las tareas de `CommandExecutor`. Tras perder la conexión se publica `StreamDisconnected` + `StreamReconnecting { attempt, delay }`, se espera y se reintenta. La cuenta de intentos solo se reinicia tras una conexión **sana** (entregó datos o duró 60 s): un servidor que acepta y corta de inmediato recibe esperas crecientes. |
+| Avisos | Solo se avisa al perder una conexión que funcionaba y al recuperarla; los intentos fallidos intermedios no llenan la barra de mensajes. La barra muestra `↻ Datos: reintento N en Xs`. `r` reintenta de inmediato. |
+| Resincronización | Al reconectar el flujo de órdenes se recarga el portafolio por REST (fuente de verdad): cubre ejecuciones o cancelaciones ocurridas mientras estuvo caído. Cada reconexión del flujo de mercado recarga la foto inicial. |
+| Flujo congelado | Si el flujo está "en vivo", el mercado abierto y no llega ningún dato en 120 s, se considera conexión zombi y se reconecta. Con el mercado cerrado el silencio es normal y no se fuerza nada. |
+| Reintentos HTTP | En `AlpacaHttp`: hasta 3 reintentos ante red, 429 o 5xx, con espera exponencial o la de `Retry-After` (tope 60 s). **Se reintentan** lecturas y el envío de órdenes (el `client_order_id` evita duplicados). **No se reintentan** cancelaciones (un segundo intento daría un error engañoso) ni errores 4xx. |
+| Límite de peticiones | Ventana deslizante de 60 s, 190 peticiones por API (trading y datos por separado), solo con aritmética entera. Configurable en `AlpacaConfig`. |
+| Pruebas | Tiempo simulado de `tokio` (`start_paused`) para el limitador y el bucle de reconexión; `wiremock` para reintentos y `Retry-After`. Verificado en vivo: una segunda instancia rechazada por el límite de conexiones reintenta con esperas crecientes y se conecta sola al liberarse la conexión. |
