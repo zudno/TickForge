@@ -7,8 +7,8 @@ use crate::action::Action;
 use crate::command::Command;
 use crate::labels;
 use crate::state::{
-    AppState, CancelConfirmation, NotificationLevel, OrderTicket, Overlay, Panel, PreviewOverlay,
-    StreamStatus, SymbolInput,
+    AppState, CancelConfirmation, KillSwitchDialog, NotificationLevel, OrderTicket, Overlay, Panel,
+    PreviewOverlay, StreamStatus, SymbolInput,
 };
 
 /// Cada cuánto se refresca el portafolio por REST (posiciones, saldos).
@@ -31,6 +31,7 @@ pub fn initial_commands(state: &mut AppState) -> Vec<Command> {
     vec![
         // Primero: resolver órdenes que pudieron quedar a medias en la sesión anterior
         Command::ReconcileOrders,
+        Command::LoadKillSwitch,
         Command::LoadPortfolio,
         Command::LoadMarketClock,
         Command::StartMarketStream(state.watchlist.symbols()),
@@ -73,6 +74,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
         Action::TicketInput(character) => with_ticket(state, |ticket| ticket.input(character)),
         Action::TicketBackspace => with_ticket(state, OrderTicket::backspace),
         Action::RequestCancelSelected => request_cancel(state),
+        Action::OpenKillSwitch => open_kill_switch(state),
 
         // --- Watchlist ---
         Action::OpenAddSymbol => {
@@ -141,6 +143,70 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
             NotificationLevel::Error,
             format!("No se pudo reconciliar el diario de órdenes: {reason}"),
         ),
+
+        // --- Kill switch ---
+        Action::KillSwitchLoaded(kill_switch) => {
+            if kill_switch.is_engaged() {
+                state.notifications.push(
+                    now,
+                    NotificationLevel::Warning,
+                    "El kill switch sigue activo desde la sesión anterior: órdenes bloqueadas",
+                );
+            }
+            state.kill_switch = kill_switch;
+        }
+        Action::KillSwitchEngaged {
+            state: kill_switch,
+            report,
+        } => {
+            state.kill_switch = kill_switch;
+            if matches!(state.overlay, Overlay::KillSwitch(_)) {
+                state.overlay = Overlay::None;
+            }
+            let (level, message) = if report.failed.is_empty() {
+                (
+                    NotificationLevel::Warning,
+                    format!(
+                        "KILL SWITCH ACTIVO: {} órdenes canceladas, órdenes nuevas bloqueadas",
+                        report.canceled.len()
+                    ),
+                )
+            } else {
+                (
+                    NotificationLevel::Error,
+                    format!(
+                        "KILL SWITCH ACTIVO, pero {} órdenes no se pudieron cancelar ({} sí). \
+                         Revisa el panel de órdenes y pulsa ! de nuevo para reintentar",
+                        report.failed.len(),
+                        report.canceled.len()
+                    ),
+                )
+            };
+            state.notifications.push(now, level, message);
+            return refresh_portfolio_now(state);
+        }
+        Action::KillSwitchReleased => {
+            state.kill_switch = tickforge_domain::risk::KillSwitch::Released;
+            if matches!(state.overlay, Overlay::KillSwitch(_)) {
+                state.overlay = Overlay::None;
+            }
+            state.notifications.push(
+                now,
+                NotificationLevel::Info,
+                "Kill switch desactivado: se permiten órdenes nuevas",
+            );
+        }
+        Action::KillSwitchFailed(reason) => {
+            if let Overlay::KillSwitch(dialog) = &mut state.overlay {
+                dialog.submitting = false;
+                dialog.error = Some(reason.clone());
+            }
+            state.notifications.push(
+                now,
+                NotificationLevel::Error,
+                format!("Kill switch: {reason}"),
+            );
+        }
 
         Action::Tick(instant) => return tick(state, instant),
 
@@ -339,10 +405,32 @@ fn open_ticket(state: &mut AppState, side: OrderSide) {
     if state.overlay != Overlay::None {
         return;
     }
+    // La política de riesgo es la barrera real; esto solo evita llenar un ticket inútil
+    if state.kill_switch.is_engaged() {
+        state.notifications.push(
+            state.now,
+            NotificationLevel::Error,
+            "Kill switch activo: las órdenes están bloqueadas. Pulsa ! para desactivarlo",
+        );
+        return;
+    }
     let Some(row) = state.watchlist.selected_row() else {
         return;
     };
     state.overlay = Overlay::Ticket(OrderTicket::new(row.symbol.clone(), side, row.bid, row.ask));
+}
+
+/// `!`: confirmar la activación (o la desactivación, si ya está activo).
+fn open_kill_switch(state: &mut AppState) {
+    if state.overlay != Overlay::None {
+        return;
+    }
+    state.overlay = Overlay::KillSwitch(KillSwitchDialog {
+        engage: !state.kill_switch.is_engaged(),
+        open_orders: state.open_orders().len(),
+        submitting: false,
+        error: None,
+    });
 }
 
 fn with_symbol_input(state: &mut AppState, update: impl FnOnce(&mut SymbolInput)) {
@@ -391,11 +479,14 @@ fn close_overlay(state: &mut AppState) {
         Overlay::Preview(preview) => Overlay::Preview(preview),
         Overlay::Ticket(ticket) if ticket.awaiting_preview => Overlay::Ticket(ticket),
         Overlay::AddSymbol(input) if input.awaiting => Overlay::AddSymbol(input),
+        // Mientras se activa o desactiva no se puede cerrar: el resultado debe verse
+        Overlay::KillSwitch(dialog) if dialog.submitting => Overlay::KillSwitch(dialog),
         Overlay::None
         | Overlay::Help
         | Overlay::Ticket(_)
         | Overlay::CancelConfirm(_)
-        | Overlay::AddSymbol(_) => Overlay::None,
+        | Overlay::AddSymbol(_)
+        | Overlay::KillSwitch(_) => Overlay::None,
     };
 }
 
@@ -444,6 +535,15 @@ fn confirm(state: &mut AppState) -> Vec<Command> {
             confirmation.submitting = true;
             confirmation.error = None;
             vec![Command::CancelOrder(confirmation.order.id().clone())]
+        }
+        Overlay::KillSwitch(dialog) if !dialog.submitting => {
+            dialog.submitting = true;
+            dialog.error = None;
+            if dialog.engage {
+                vec![Command::EngageKillSwitch]
+            } else {
+                vec![Command::ReleaseKillSwitch]
+            }
         }
         _ => Vec::new(),
     }

@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use tickforge_application::use_cases::portfolio::PortfolioSnapshot;
 use tickforge_domain::market::MarketClock;
+use tickforge_domain::risk::KillSwitch;
 use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::Order;
 
@@ -56,6 +57,8 @@ pub struct AppState {
     pub overlay: Overlay,
     pub focus: Panel,
     pub selected_order: usize,
+    /// Interruptor de emergencia; se carga del almacenamiento al iniciar.
+    pub kill_switch: KillSwitch,
     pub should_quit: bool,
     pub(crate) last_portfolio_request: Option<DateTime<Utc>>,
     pub(crate) last_clock_request: Option<DateTime<Utc>>,
@@ -87,6 +90,7 @@ impl AppState {
             overlay: Overlay::None,
             focus: Panel::Watchlist,
             selected_order: 0,
+            kill_switch: KillSwitch::Released,
             should_quit: false,
             last_portfolio_request: None,
             last_clock_request: None,

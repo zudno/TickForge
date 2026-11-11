@@ -22,7 +22,7 @@ use rust_decimal::{Decimal, RoundingStrategy};
 use tickforge_adapter_alpaca::{
     AlpacaBrokerGateway, AlpacaConfig, AlpacaCredentials, AlpacaEnvironment, AlpacaMarketData,
 };
-use tickforge_adapter_sqlite::{SqliteOrderJournal, SqliteStore};
+use tickforge_adapter_sqlite::{SqliteKillSwitchRepository, SqliteOrderJournal, SqliteStore};
 use tickforge_application::ports::{
     ApplicationEvent, BrokerGateway, ClientOrderIdGenerator, Clock, EventPublisher, JournalEntry,
     MarketDataFeed, OrderJournal,
@@ -147,6 +147,7 @@ async fn an_order_sent_before_a_crash_is_recovered_on_restart() {
         events: Arc::new(IgnoreEvents),
         clock: Arc::new(SystemClock),
         client_order_ids: Arc::new(NoIds),
+        kill_switch: Arc::new(SqliteKillSwitchRepository::new(store.clone())),
     });
     let report = reconcile.execute().await.unwrap();
     println!(

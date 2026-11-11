@@ -16,6 +16,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_width)]).areas(area);
 
     let mut spans = vec![mode_badge(state.mode), Span::raw(" ")];
+    if state.kill_switch.is_engaged() {
+        spans.push(Span::styled(" ⛔ DETENIDO ", theme::kill_switch_badge()));
+        spans.push(Span::raw(" "));
+    }
     spans.extend(market_session(state));
     spans.push(separator());
     spans.push(connections(state));

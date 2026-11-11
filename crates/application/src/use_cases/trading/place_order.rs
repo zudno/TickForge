@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use tickforge_domain::market::Quote;
 use tickforge_domain::portfolio::{Account, Position};
-use tickforge_domain::risk::{RiskAssessment, RiskContext, RiskPolicy};
+use tickforge_domain::risk::{KillSwitch, RiskAssessment, RiskContext, RiskPolicy};
 use tickforge_domain::shared::{Money, Price, Quantity, Symbol};
 use tickforge_domain::trading::{Order, OrderRequest, OrderSide, OrderType, TimeInForce};
 
@@ -42,6 +42,7 @@ struct RiskInputs {
     account: Account,
     position: Option<Position>,
     quote: Quote,
+    kill_switch: KillSwitch,
     now: DateTime<Utc>,
 }
 
@@ -180,10 +181,10 @@ impl PlaceOrderUseCase {
         )?)
     }
 
-    /// Cuenta, posición y cotización, consultadas en paralelo.
+    /// Cuenta, posición, cotización y kill switch, consultados en paralelo.
     async fn gather_inputs(&self, request: &OrderRequest) -> Result<RiskInputs, ApplicationError> {
         let ports = &self.ports;
-        let (account, position, quote) = futures::try_join!(
+        let (account, position, quote, kill_switch) = futures::try_join!(
             async { ports.broker.account().await.map_err(ApplicationError::from) },
             async {
                 ports
@@ -199,11 +200,20 @@ impl PlaceOrderUseCase {
                     .await
                     .map_err(ApplicationError::from)
             },
+            // Se lee del almacenamiento en cada orden: si no se puede leer, la orden no sale
+            async {
+                ports
+                    .kill_switch
+                    .load()
+                    .await
+                    .map_err(ApplicationError::from)
+            },
         )?;
         Ok(RiskInputs {
             account,
             position,
             quote,
+            kill_switch,
             now: ports.clock.now(),
         })
     }
@@ -219,6 +229,7 @@ impl PlaceOrderUseCase {
             position: inputs.position.as_ref(),
             quote: &inputs.quote,
             now: inputs.now,
+            kill_switch: &inputs.kill_switch,
         })?)
     }
 }

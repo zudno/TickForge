@@ -111,7 +111,7 @@ fn startup_opens_both_streams() {
     let mut state = state();
     let commands = initial_commands(&mut state);
 
-    assert_eq!(commands.len(), 5);
+    assert_eq!(commands.len(), 6);
     assert!(commands.contains(&Command::StartOrderStream));
 }
 
@@ -242,6 +242,7 @@ fn rejected_assessment() -> RiskAssessment {
             position: None::<&Position>,
             quote: &quote,
             now: at(1_000),
+            kill_switch: &tickforge_domain::risk::KillSwitch::Released,
         })
         .unwrap();
     assert!(
@@ -657,4 +658,125 @@ fn silence_with_the_market_closed_is_normal() {
             .any(|c| matches!(c, Command::StartMarketStream(_)))
     );
     assert_eq!(state.stream_status, StreamStatus::Live);
+}
+
+// --- Kill switch ---
+
+fn engaged() -> tickforge_domain::risk::KillSwitch {
+    tickforge_domain::risk::KillSwitch::engaged(at(1_000), "activado desde la TUI")
+}
+
+#[test]
+fn startup_loads_the_saved_kill_switch() {
+    let mut state = state();
+    assert!(initial_commands(&mut state).contains(&Command::LoadKillSwitch));
+
+    reduce(&mut state, Action::KillSwitchLoaded(engaged()));
+    assert!(state.kill_switch.is_engaged());
+    assert!(
+        state
+            .notifications
+            .latest()
+            .unwrap()
+            .message
+            .contains("sigue activo")
+    );
+}
+
+#[test]
+fn engaging_asks_for_confirmation_then_reports_the_result() {
+    let mut state = state();
+    reduce(
+        &mut state,
+        Action::PortfolioLoaded(portfolio_with(vec![open_order()])),
+    );
+
+    reduce(&mut state, Action::OpenKillSwitch);
+    let Overlay::KillSwitch(dialog) = &state.overlay else {
+        panic!("se esperaba la confirmación del kill switch");
+    };
+    assert!(dialog.engage);
+    assert_eq!(dialog.open_orders, 1);
+
+    assert_eq!(
+        reduce(&mut state, Action::Confirm),
+        vec![Command::EngageKillSwitch]
+    );
+    // Mientras se ejecuta no se puede cerrar ni repetir
+    reduce(&mut state, Action::CloseOverlay);
+    assert!(matches!(state.overlay, Overlay::KillSwitch(_)));
+    assert!(reduce(&mut state, Action::Confirm).is_empty());
+
+    let commands = reduce(
+        &mut state,
+        Action::KillSwitchEngaged {
+            state: engaged(),
+            report: tickforge_application::use_cases::trading::KillSwitchReport {
+                canceled: vec![OrderId::new("ord-1").unwrap()],
+                failed: Vec::new(),
+                journal_warning: None,
+            },
+        },
+    );
+    assert_eq!(state.overlay, Overlay::None);
+    assert!(state.kill_switch.is_engaged());
+    assert_eq!(commands, vec![Command::LoadPortfolio]);
+    assert!(
+        state
+            .notifications
+            .latest()
+            .unwrap()
+            .message
+            .starts_with("KILL SWITCH ACTIVO: 1 órdenes canceladas")
+    );
+}
+
+#[test]
+fn partial_failures_are_reported_as_errors() {
+    let mut state = state();
+    reduce(
+        &mut state,
+        Action::KillSwitchEngaged {
+            state: engaged(),
+            report: tickforge_application::use_cases::trading::KillSwitchReport {
+                canceled: Vec::new(),
+                failed: vec![(OrderId::new("ord-1").unwrap(), "timeout".to_owned())],
+                journal_warning: None,
+            },
+        },
+    );
+    let latest = state.notifications.latest().unwrap();
+    assert_eq!(latest.level, NotificationLevel::Error);
+    assert!(latest.message.contains("no se pudieron cancelar"));
+}
+
+#[test]
+fn while_engaged_tickets_do_not_open_and_bang_offers_to_release() {
+    let mut state = state();
+    reduce(&mut state, Action::KillSwitchLoaded(engaged()));
+
+    reduce(&mut state, Action::OpenTicket(OrderSide::Buy));
+    assert_eq!(state.overlay, Overlay::None);
+    assert!(
+        state
+            .notifications
+            .latest()
+            .unwrap()
+            .message
+            .contains("Kill switch activo")
+    );
+
+    reduce(&mut state, Action::OpenKillSwitch);
+    let Overlay::KillSwitch(dialog) = &state.overlay else {
+        panic!("se esperaba la confirmación");
+    };
+    assert!(!dialog.engage);
+    assert_eq!(
+        reduce(&mut state, Action::Confirm),
+        vec![Command::ReleaseKillSwitch]
+    );
+
+    reduce(&mut state, Action::KillSwitchReleased);
+    assert!(!state.kill_switch.is_engaged());
+    assert_eq!(state.overlay, Overlay::None);
 }

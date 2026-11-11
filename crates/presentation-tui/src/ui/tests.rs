@@ -237,6 +237,7 @@ mod orders {
                 position: None,
                 quote: &quote,
                 now: at("2024-03-01T15:00:00Z"),
+                kill_switch: &tickforge_domain::risk::KillSwitch::Released,
             })
             .unwrap()
     }
@@ -312,4 +313,24 @@ fn status_bar_shows_the_reconnection_countdown() {
         },
     );
     assert!(draw(&state).contains("↻ Datos: reintento 3 en 8s"));
+}
+
+#[test]
+fn renders_kill_switch_confirmation() {
+    let mut state = loaded_state();
+    reduce(&mut state, Action::OpenKillSwitch);
+    insta::assert_snapshot!(draw(&state));
+}
+
+#[test]
+fn engaged_kill_switch_is_impossible_to_miss() {
+    let mut state = loaded_state();
+    reduce(
+        &mut state,
+        Action::KillSwitchLoaded(tickforge_domain::risk::KillSwitch::engaged(
+            at("2024-03-01T15:00:00Z"),
+            "activado desde la TUI",
+        )),
+    );
+    insta::assert_snapshot!(draw(&state));
 }

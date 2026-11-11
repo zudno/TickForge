@@ -15,6 +15,8 @@ pub enum Overlay {
     Preview(PreviewOverlay),
     /// Confirmación de cancelación de una orden abierta.
     CancelConfirm(CancelConfirmation),
+    /// Confirmación para activar o desactivar el kill switch.
+    KillSwitch(KillSwitchDialog),
     /// Captura de un símbolo para agregarlo a la watchlist.
     AddSymbol(SymbolInput),
 }
@@ -59,6 +61,16 @@ pub struct PreviewOverlay {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CancelConfirmation {
     pub order: Order,
+    pub submitting: bool,
+    pub error: Option<String>,
+}
+
+/// Confirmación del kill switch. `engage` indica si se va a activar (o a desactivar).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KillSwitchDialog {
+    pub engage: bool,
+    /// Órdenes abiertas conocidas al abrir la ventana (las que se cancelarían).
+    pub open_orders: usize,
     pub submitting: bool,
     pub error: Option<String>,
 }

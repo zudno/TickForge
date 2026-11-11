@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use crate::error::DomainError;
 use crate::market::Quote;
 use crate::portfolio::{Account, Position};
-use crate::risk::{RiskLimits, RiskViolation};
+use crate::risk::{KillSwitch, RiskLimits, RiskViolation};
 use crate::shared::{Money, Quantity};
 use crate::trading::{OrderRequest, OrderSide};
 
@@ -16,6 +16,8 @@ pub struct RiskContext<'a> {
     pub position: Option<&'a Position>,
     pub quote: &'a Quote,
     pub now: DateTime<Utc>,
+    /// Interruptor de emergencia: si está activo, ninguna orden pasa.
+    pub kill_switch: &'a KillSwitch,
 }
 
 /// Resultado de la evaluación: aprobada si no hay violaciones.
@@ -65,6 +67,7 @@ impl RiskPolicy {
             position,
             quote,
             now,
+            kill_switch,
         } = *context;
 
         ensure_same_symbol(request, quote.symbol())?;
@@ -74,6 +77,11 @@ impl RiskPolicy {
 
         let mut violations = Vec::new();
 
+        if let KillSwitch::Engaged { reason, .. } = kill_switch {
+            violations.push(RiskViolation::KillSwitchEngaged {
+                reason: reason.clone(),
+            });
+        }
         if account.is_trading_blocked() {
             violations.push(RiskViolation::TradingBlocked);
         }
@@ -249,6 +257,7 @@ mod tests {
                 position,
                 quote,
                 now: at(NOW),
+                kill_switch: &KillSwitch::Released,
             })
             .unwrap()
     }
@@ -263,6 +272,29 @@ mod tests {
             &quote("AAPL", dec!(189.10), dec!(189.12), NOW),
         );
         assert!(assessment.is_approved(), "{:?}", assessment.violations());
+    }
+
+    #[test]
+    fn an_engaged_kill_switch_blocks_even_a_perfect_order() {
+        let request = order(OrderSide::Buy, OrderType::Market, dec!(1));
+        let kill_switch = KillSwitch::engaged(at(NOW), "manual");
+        let assessment = policy()
+            .evaluate(&RiskContext {
+                request: &request,
+                account: &account(dec!(50000), false),
+                position: None,
+                quote: &quote("AAPL", dec!(189.10), dec!(189.12), NOW),
+                now: at(NOW),
+                kill_switch: &kill_switch,
+            })
+            .unwrap();
+
+        assert_eq!(
+            assessment.violations(),
+            [RiskViolation::KillSwitchEngaged {
+                reason: "manual".to_owned()
+            }]
+        );
     }
 
     #[test]
@@ -403,6 +435,7 @@ mod tests {
             position: None,
             quote: &quote("MSFT", dec!(400), dec!(400.05), NOW),
             now: at(NOW),
+            kill_switch: &KillSwitch::Released,
         });
 
         assert!(matches!(result, Err(DomainError::SymbolMismatch { .. })));

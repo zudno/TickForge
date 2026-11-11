@@ -10,12 +10,21 @@ use crate::theme;
 
 /// Resumen de la cuenta: equity, efectivo, poder de compra y P&L del día.
 pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
-    let block = Block::bordered()
+    let mut block = Block::bordered()
         .title(Span::styled(" TickForge ", theme::title()))
         .title(Span::styled(
             format!(" {} ", state.broker_name),
             theme::muted(),
         ));
+    // Con el kill switch activo, el marco de la cuenta se vuelve rojo y lo anuncia
+    if state.kill_switch.is_engaged() {
+        block = block
+            .border_style(ratatui::style::Style::new().fg(theme::NEGATIVE))
+            .title(Span::styled(
+                " ⛔ KILL SWITCH ACTIVO · órdenes bloqueadas · ! para desactivar ",
+                theme::kill_switch_badge(),
+            ));
+    }
 
     let line = match &state.portfolio {
         None => Line::from(Span::styled("Cargando cuenta…", theme::muted())),
