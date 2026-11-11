@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use chrono::{DateTime, Utc};
 use tickforge_application::ports::{MarketEvent, OrderUpdate};
 use tickforge_application::use_cases::market::SymbolSnapshot;
@@ -45,6 +47,11 @@ pub enum Action {
     Market(MarketEvent),
     StreamConnected,
     StreamDisconnected(String),
+    /// Se reintentará conectar el flujo de mercado tras `delay` (intento número `attempt`).
+    StreamReconnecting {
+        attempt: u32,
+        delay: Duration,
+    },
 
     // --- Cuenta y sesión ---
     PortfolioLoaded(PortfolioSnapshot),
@@ -62,6 +69,10 @@ pub enum Action {
     OrderUpdateReceived(OrderUpdate),
     OrderStreamConnected,
     OrderStreamDisconnected(String),
+    OrderStreamReconnecting {
+        attempt: u32,
+        delay: Duration,
+    },
 
     // --- Persistencia ---
     WatchlistChanged(Vec<Symbol>),

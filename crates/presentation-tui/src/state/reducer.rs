@@ -20,6 +20,10 @@ const EVENT_PORTFOLIO_REFRESH: TimeDelta = TimeDelta::seconds(1);
 /// Cada cuánto se consulta el reloj de mercado.
 const CLOCK_REFRESH: TimeDelta = TimeDelta::seconds(60);
 
+/// Tiempo sin datos de mercado (con el mercado abierto) tras el cual el flujo se da por
+/// congelado y se reconecta.
+const FROZEN_STREAM: TimeDelta = TimeDelta::seconds(120);
+
 /// Comandos a ejecutar al arrancar.
 pub fn initial_commands(state: &mut AppState) -> Vec<Command> {
     state.last_portfolio_request = Some(state.now);
@@ -148,22 +152,37 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
         }
         Action::Market(event) => {
             state.watchlist.apply_event(&event);
+            state.last_market_event_at = Some(now);
         }
         Action::StreamConnected => {
+            let message = if state.stream_status.is_down() {
+                "Datos en tiempo real reconectados"
+            } else {
+                "Datos en tiempo real conectados"
+            };
             state.stream_status = StreamStatus::Live;
-            state.notifications.push(
-                now,
-                NotificationLevel::Info,
-                "Datos en tiempo real conectados",
-            );
+            // El reloj de "datos congelados" empieza a contar desde la conexión
+            state.last_market_event_at = Some(now);
+            state
+                .notifications
+                .push(now, NotificationLevel::Info, message);
         }
         Action::StreamDisconnected(reason) => {
-            state.notifications.push(
-                now,
-                NotificationLevel::Warning,
-                format!("Datos en tiempo real desconectados: {reason}. Pulsa r para reconectar"),
-            );
+            // Solo se avisa al perder una conexión que funcionaba, no en cada intento fallido
+            if !state.stream_status.is_down() {
+                state.notifications.push(
+                    now,
+                    NotificationLevel::Warning,
+                    format!("Datos en tiempo real desconectados: {reason}. Reconectando…"),
+                );
+            }
             state.stream_status = StreamStatus::Disconnected(reason);
+        }
+        Action::StreamReconnecting { attempt, delay } => {
+            state.stream_status = StreamStatus::Reconnecting {
+                attempt,
+                retry_at: after(now, delay),
+            };
         }
 
         // --- Cuenta y sesión ---
@@ -259,16 +278,34 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
             state.portfolio_refresh_pending = true;
             return refresh_portfolio_if_due(state);
         }
-        Action::OrderStreamConnected => state.order_stream_status = StreamStatus::Live,
+        Action::OrderStreamConnected => {
+            state.order_stream_status = StreamStatus::Live;
+            if std::mem::replace(&mut state.order_stream_was_connected, true) {
+                // Mientras estuvo caído pudieron ejecutarse o cancelarse órdenes: la cuenta
+                // se vuelve a cargar por REST, que es la fuente de verdad
+                state.notifications.push(
+                    now,
+                    NotificationLevel::Info,
+                    "Actualizaciones de órdenes reconectadas; cuenta sincronizada",
+                );
+                return refresh_portfolio_now(state);
+            }
+        }
         Action::OrderStreamDisconnected(reason) => {
-            state.notifications.push(
-                now,
-                NotificationLevel::Warning,
-                format!(
-                    "Actualizaciones de órdenes desconectadas: {reason}. Pulsa r para reconectar"
-                ),
-            );
+            if !state.order_stream_status.is_down() {
+                state.notifications.push(
+                    now,
+                    NotificationLevel::Warning,
+                    format!("Actualizaciones de órdenes desconectadas: {reason}. Reconectando…"),
+                );
+            }
             state.order_stream_status = StreamStatus::Disconnected(reason);
+        }
+        Action::OrderStreamReconnecting { attempt, delay } => {
+            state.order_stream_status = StreamStatus::Reconnecting {
+                attempt,
+                retry_at: after(now, delay),
+            };
         }
     }
     Vec::new()
@@ -417,11 +454,12 @@ fn refresh(state: &mut AppState) -> Vec<Command> {
     state.last_clock_request = Some(state.now);
     let mut commands = vec![Command::LoadPortfolio, Command::LoadMarketClock];
 
-    if matches!(state.stream_status, StreamStatus::Disconnected(_)) {
+    // `r` no espera a la reconexión automática: reintenta ya (el intento en curso se cancela)
+    if state.stream_status.is_down() {
         state.stream_status = StreamStatus::Connecting;
         commands.push(Command::StartMarketStream(state.watchlist.symbols()));
     }
-    if matches!(state.order_stream_status, StreamStatus::Disconnected(_)) {
+    if state.order_stream_status.is_down() {
         state.order_stream_status = StreamStatus::Connecting;
         commands.push(Command::StartOrderStream);
     }
@@ -470,7 +508,41 @@ fn tick(state: &mut AppState, instant: DateTime<Utc>) -> Vec<Command> {
         state.last_clock_request = Some(instant);
         commands.push(Command::LoadMarketClock);
     }
+
+    commands.extend(restart_if_frozen(state));
     commands
+}
+
+/// Un flujo puede seguir "conectado" sin entregar nada (conexión zombi). Con el mercado
+/// abierto y la watchlist llena de símbolos líquidos eso no es normal: se reconecta en lugar de
+/// mostrar precios viejos como si fueran actuales.
+fn restart_if_frozen(state: &mut AppState) -> Vec<Command> {
+    let market_open = state.market_clock.is_some_and(|clock| clock.is_open());
+    let frozen = state.stream_status == StreamStatus::Live
+        && market_open
+        && is_due(state.last_market_event_at, state.now, FROZEN_STREAM);
+    if !frozen {
+        return Vec::new();
+    }
+    state.notifications.push(
+        state.now,
+        NotificationLevel::Warning,
+        format!(
+            "Sin datos de mercado desde hace {} s con el mercado abierto; reconectando",
+            FROZEN_STREAM.num_seconds()
+        ),
+    );
+    state.stream_status = StreamStatus::Connecting;
+    state.last_market_event_at = Some(state.now);
+    vec![Command::StartMarketStream(state.watchlist.symbols())]
+}
+
+/// `now + delay`, saturando ante desbordes.
+fn after(now: DateTime<Utc>, delay: std::time::Duration) -> DateTime<Utc> {
+    TimeDelta::from_std(delay)
+        .ok()
+        .and_then(|delay| now.checked_add_signed(delay))
+        .unwrap_or(now)
 }
 
 fn is_due(last: Option<DateTime<Utc>>, now: DateTime<Utc>, interval: TimeDelta) -> bool {

@@ -20,6 +20,18 @@ pub enum StreamStatus {
     Connecting,
     Live,
     Disconnected(String),
+    /// Esperando para reintentar; `retry_at` es cuándo se hará el intento número `attempt`.
+    Reconnecting {
+        attempt: u32,
+        retry_at: DateTime<Utc>,
+    },
+}
+
+impl StreamStatus {
+    /// Sin conexión (caída o esperando reconectar): `r` fuerza un reintento inmediato.
+    pub fn is_down(&self) -> bool {
+        matches!(self, Self::Disconnected(_) | Self::Reconnecting { .. })
+    }
 }
 
 /// Panel que recibe la navegación con `j`/`k`.
@@ -49,6 +61,10 @@ pub struct AppState {
     pub(crate) last_clock_request: Option<DateTime<Utc>>,
     /// Un evento de orden pidió refrescar el portafolio; se agrupa para no saturar la API.
     pub(crate) portfolio_refresh_pending: bool,
+    /// Último dato de mercado recibido; sirve para detectar un flujo "conectado" pero congelado.
+    pub(crate) last_market_event_at: Option<DateTime<Utc>>,
+    /// El flujo de órdenes ya estuvo conectado antes (una nueva conexión es una reconexión).
+    pub(crate) order_stream_was_connected: bool,
 }
 
 impl AppState {
@@ -75,6 +91,8 @@ impl AppState {
             last_portfolio_request: None,
             last_clock_request: None,
             portfolio_refresh_pending: false,
+            last_market_event_at: None,
+            order_stream_was_connected: false,
         }
     }
 

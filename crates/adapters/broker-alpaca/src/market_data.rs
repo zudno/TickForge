@@ -13,7 +13,7 @@ use tickforge_domain::shared::Symbol;
 
 use crate::config::{AlpacaConfig, AlpacaCredentials, DataFeed};
 use crate::error::AlpacaSetupError;
-use crate::http::{AlpacaHttp, HttpError};
+use crate::http::{AlpacaHttp, HttpError, RequestPolicy};
 use crate::mapping::{self, DataFrameItem, MappingError};
 use crate::websocket::{self, Socket, StreamError};
 use crate::wire::{BarsResponseWire, LatestQuoteResponseWire};
@@ -48,6 +48,10 @@ impl AlpacaMarketData {
                 &config.data_base_url,
                 &config.credentials,
                 config.request_timeout,
+                RequestPolicy {
+                    max_retries: config.max_retries,
+                    requests_per_minute: config.requests_per_minute,
+                },
             )?,
             feed: config.data_feed,
             clock,

@@ -5,6 +5,7 @@
 
 pub mod error;
 pub mod ports;
+pub mod resilience;
 pub mod use_cases;
 
 pub use error::ApplicationError;

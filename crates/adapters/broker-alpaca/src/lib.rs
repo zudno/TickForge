@@ -12,6 +12,7 @@ mod gateway;
 mod http;
 mod mapping;
 mod market_data;
+mod rate_limiter;
 mod websocket;
 mod wire;
 

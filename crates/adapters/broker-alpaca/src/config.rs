@@ -86,6 +86,10 @@ pub struct AlpacaConfig {
     /// Base del WebSocket de datos; el feed se agrega al conectar (`/v2/iex`).
     pub data_stream_base_url: String,
     pub request_timeout: Duration,
+    /// Reintentos automáticos ante errores pasajeros (red, 429, 5xx) en operaciones seguras.
+    pub max_retries: u32,
+    /// Peticiones por minuto que se permite cada API (Alpaca admite unas 200; se deja margen).
+    pub requests_per_minute: u32,
 }
 
 impl AlpacaConfig {
@@ -103,6 +107,8 @@ impl AlpacaConfig {
             trading_stream_url: AlpacaEnvironment::Paper.trading_stream_url().to_owned(),
             data_stream_base_url: Self::DATA_STREAM_BASE_URL.to_owned(),
             request_timeout: Duration::from_secs(10),
+            max_retries: 3,
+            requests_per_minute: 190,
         }
     }
 

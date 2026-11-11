@@ -12,7 +12,7 @@ use tickforge_domain::trading::{ClientOrderId, Order, OrderId, OrderRequest};
 
 use crate::config::{AlpacaConfig, AlpacaCredentials};
 use crate::error::AlpacaSetupError;
-use crate::http::{AlpacaHttp, HttpError};
+use crate::http::{AlpacaHttp, HttpError, RequestPolicy, Retry};
 use crate::mapping::{self, MappingError};
 use crate::websocket::{self, Socket, StreamError};
 use crate::wire::{
@@ -42,6 +42,10 @@ impl AlpacaBrokerGateway {
                 &config.trading_base_url,
                 &config.credentials,
                 config.request_timeout,
+                RequestPolicy {
+                    max_retries: config.max_retries,
+                    requests_per_minute: config.requests_per_minute,
+                },
             )?,
             credentials: config.credentials.duplicate(),
             stream_url: config.trading_stream_url.clone(),
@@ -176,7 +180,12 @@ impl BrokerGateway for AlpacaBrokerGateway {
 
     async fn submit_order(&self, request: &OrderRequest) -> Result<Order, BrokerError> {
         let body = mapping::new_order_body(request);
-        match self.http.post::<_, OrderWire>("/v2/orders", &body).await {
+        // Reintentar es seguro: el `client_order_id` hace que Alpaca no duplique la orden
+        match self
+            .http
+            .post::<_, OrderWire>("/v2/orders", &body, Retry::Allowed)
+            .await
+        {
             Ok(wire) => mapping::order(wire).map_err(invalid_response),
             // Reintento de un envío que sí llegó: se devuelve la orden ya existente
             Err(HttpError::Status { status, message })

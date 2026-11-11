@@ -20,11 +20,12 @@ serde_json.workspace = true
 secrecy.workspace = true
 tokio-tungstenite.workspace = true
 # `time` para los tiempos de espera del saludo inicial de los WebSocket
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "sync"] }
 
 [dev-dependencies]
 # `net` para levantar un servidor WebSocket local en las pruebas
-tokio = { workspace = true, features = ["net"] }
+# `test-util` para simular el paso del tiempo en las pruebas de reintentos y del limitador
+tokio = { workspace = true, features = ["net", "test-util"] }
 wiremock.workspace = true
 rust_decimal_macros.workspace = true
 dotenvy.workspace = true
