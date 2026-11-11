@@ -2,6 +2,7 @@
 
 mod cancel_order;
 mod place_order;
+mod watch_order_updates;
 
 use std::sync::Arc;
 
@@ -13,7 +14,8 @@ use crate::ports::{
 };
 
 pub use cancel_order::CancelOrderUseCase;
-pub use place_order::{PlaceOrderCommand, PlaceOrderUseCase};
+pub use place_order::{OrderPreview, PlaceOrderCommand, PlaceOrderUseCase};
+pub use watch_order_updates::WatchOrderUpdatesUseCase;
 
 /// Puertos que comparten los casos de uso de trading.
 ///

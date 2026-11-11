@@ -1,20 +1,31 @@
 //! Configuración desde variables de entorno (y el archivo `.env`, si existe).
 
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use anyhow::{Context, bail};
+use chrono::TimeDelta;
+use rust_decimal::Decimal;
 use tickforge_adapter_alpaca::DataFeed;
-use tickforge_domain::shared::Symbol;
+use tickforge_domain::risk::RiskLimits;
+use tickforge_domain::shared::{Money, Symbol};
 use tickforge_presentation_tui::TradingMode;
 
 /// Watchlist por defecto si no se define `TICKFORGE_WATCHLIST`.
 const DEFAULT_WATCHLIST: &str = "AAPL,MSFT,NVDA,AMZN,SPY,QQQ";
+
+/// Límites de riesgo por defecto: conservadores a propósito. Se ajustan en `.env`.
+const DEFAULT_MAX_ORDER_NOTIONAL: &str = "5000";
+const DEFAULT_MAX_POSITION_NOTIONAL: &str = "20000";
+const DEFAULT_MAX_PRICE_DEVIATION_PCT: &str = "5";
+const DEFAULT_MAX_QUOTE_AGE_SECS: &str = "15";
 
 pub struct Settings {
     pub mode: TradingMode,
     pub watchlist: Vec<Symbol>,
     pub data_feed: DataFeed,
     pub log_dir: PathBuf,
+    pub risk_limits: RiskLimits,
     pub alpaca_key_id: String,
     pub alpaca_secret_key: String,
 }
@@ -52,10 +63,46 @@ impl Settings {
             data_feed,
             log_dir: optional("TICKFORGE_LOG_DIR")
                 .map_or_else(|| PathBuf::from("logs"), PathBuf::from),
+            risk_limits: risk_limits()?,
             alpaca_key_id: required("ALPACA_API_KEY_ID")?,
             alpaca_secret_key: required("ALPACA_API_SECRET_KEY")?,
         })
     }
+}
+
+/// Límites de la política de riesgo, validados por el dominio.
+fn risk_limits() -> anyhow::Result<RiskLimits> {
+    let max_quote_age_secs: i64 =
+        setting_or("TICKFORGE_MAX_QUOTE_AGE_SECS", DEFAULT_MAX_QUOTE_AGE_SECS)
+            .parse()
+            .context("TICKFORGE_MAX_QUOTE_AGE_SECS debe ser un número entero de segundos")?;
+
+    RiskLimits::new(
+        Money::usd(decimal_setting(
+            "TICKFORGE_MAX_ORDER_NOTIONAL",
+            DEFAULT_MAX_ORDER_NOTIONAL,
+        )?),
+        Money::usd(decimal_setting(
+            "TICKFORGE_MAX_POSITION_NOTIONAL",
+            DEFAULT_MAX_POSITION_NOTIONAL,
+        )?),
+        decimal_setting(
+            "TICKFORGE_MAX_PRICE_DEVIATION_PCT",
+            DEFAULT_MAX_PRICE_DEVIATION_PCT,
+        )?,
+        TimeDelta::try_seconds(max_quote_age_secs)
+            .context("TICKFORGE_MAX_QUOTE_AGE_SECS está fuera de rango")?,
+    )
+    .context("los límites de riesgo de .env no son válidos")
+}
+
+fn setting_or(name: &str, default: &str) -> String {
+    optional(name).unwrap_or_else(|| default.to_owned())
+}
+
+fn decimal_setting(name: &str, default: &str) -> anyhow::Result<Decimal> {
+    let raw = setting_or(name, default);
+    Decimal::from_str(&raw).with_context(|| format!("{name}='{raw}' no es un número válido"))
 }
 
 fn optional(name: &str) -> Option<String> {

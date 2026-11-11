@@ -4,8 +4,8 @@
 //! implementaciones concretas de cada puerto y se cablean con la TUI.
 
 mod bootstrap;
+mod infrastructure;
 mod settings;
-mod system_clock;
 mod telemetry;
 
 use anyhow::Context;

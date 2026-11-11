@@ -33,7 +33,7 @@ fn price(value: Decimal) -> Price {
 }
 
 fn draw(state: &AppState) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(110, 16)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
     terminal.draw(|frame| render(frame, state)).unwrap();
     buffer_text(terminal.backend().buffer())
 }
@@ -144,4 +144,141 @@ fn renders_help_overlay() {
 fn paper_badge_is_always_visible() {
     let screen = draw(&loading_state());
     assert!(screen.contains(" PAPER "));
+}
+
+/// Pantallas del flujo de órdenes.
+mod orders {
+    use super::*;
+    use tickforge_application::use_cases::trading::OrderPreview;
+    use tickforge_domain::risk::{RiskAssessment, RiskContext, RiskLimits, RiskPolicy};
+    use tickforge_domain::trading::{
+        ClientOrderId, Order, OrderId, OrderRequest, OrderSide, OrderType, TimeInForce,
+    };
+
+    use crate::state::{CancelConfirmation, Overlay, PreviewOverlay};
+
+    fn limit_request() -> OrderRequest {
+        OrderRequest::new(
+            ClientOrderId::new("tf-1").unwrap(),
+            symbol("AAPL"),
+            OrderSide::Buy,
+            OrderType::Limit {
+                limit_price: price(dec!(185.50)),
+            },
+            Quantity::new(dec!(10)).unwrap(),
+            TimeInForce::Day,
+        )
+        .unwrap()
+    }
+
+    fn open_order() -> Order {
+        let mut order = Order::new(
+            OrderId::new("ord-1").unwrap(),
+            limit_request(),
+            at("2024-03-01T15:00:00Z"),
+        );
+        order.mark_accepted(at("2024-03-01T15:00:00Z")).unwrap();
+        order
+    }
+
+    fn with_open_order() -> AppState {
+        let mut state = loaded_state();
+        if let Some(portfolio) = state.portfolio.as_mut() {
+            portfolio.open_orders = vec![open_order()];
+        }
+        state
+    }
+
+    fn preview(assessment: RiskAssessment) -> PreviewOverlay {
+        let mut state = loaded_state();
+        reduce(&mut state, Action::OpenTicket(OrderSide::Buy));
+        let Overlay::Ticket(ticket) = state.overlay else {
+            panic!("se esperaba el ticket");
+        };
+        PreviewOverlay {
+            preview: OrderPreview {
+                request: limit_request(),
+                reference_price: Some(price(dec!(185.50))),
+                estimated_notional: Some(Money::usd(dec!(1855))),
+                buying_power: Money::usd(dec!(99355.75)),
+                position_quantity: Quantity::new(dec!(10)).unwrap(),
+                assessment,
+            },
+            ticket,
+            submitting: false,
+            error: None,
+        }
+    }
+
+    /// Evaluación real de la política con un límite de 1,000 USD por orden.
+    fn blocked_assessment() -> RiskAssessment {
+        let state = loaded_state();
+        let quote = Quote::new(
+            symbol("AAPL"),
+            Some(price(dec!(189.10))),
+            Quantity::new(dec!(1)).unwrap(),
+            Some(price(dec!(189.12))),
+            Quantity::new(dec!(1)).unwrap(),
+            at("2024-03-01T15:00:00Z"),
+        );
+        let policy = RiskPolicy::new(
+            RiskLimits::new(
+                Money::usd(dec!(1000)),
+                Money::usd(dec!(50000)),
+                dec!(5),
+                chrono::TimeDelta::seconds(15),
+            )
+            .unwrap(),
+        );
+        policy
+            .evaluate(&RiskContext {
+                request: &limit_request(),
+                account: &state.portfolio.as_ref().unwrap().account,
+                position: None,
+                quote: &quote,
+                now: at("2024-03-01T15:00:00Z"),
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn renders_order_ticket_with_limit_price() {
+        let mut state = loaded_state();
+        reduce(&mut state, Action::OpenTicket(OrderSide::Buy));
+        for character in "10".chars() {
+            reduce(&mut state, Action::TicketInput(character));
+        }
+        // Tipo → Límite (se propone el ask actual)
+        reduce(&mut state, Action::TicketPreviousField);
+        reduce(&mut state, Action::TicketToggle);
+        insta::assert_snapshot!(draw(&state));
+    }
+
+    #[test]
+    fn renders_approved_order_preview() {
+        let mut state = loaded_state();
+        state.overlay = Overlay::Preview(preview(RiskAssessment::default()));
+        insta::assert_snapshot!(draw(&state));
+    }
+
+    #[test]
+    fn renders_blocked_order_preview_with_reasons() {
+        let mut state = loaded_state();
+        state.overlay = Overlay::Preview(preview(blocked_assessment()));
+        insta::assert_snapshot!(draw(&state));
+    }
+
+    #[test]
+    fn renders_open_orders_with_focus_and_cancel_confirmation() {
+        let mut state = with_open_order();
+        reduce(&mut state, Action::FocusNextPanel);
+        insta::assert_snapshot!("open_orders_focused", draw(&state));
+
+        state.overlay = Overlay::CancelConfirm(CancelConfirmation {
+            order: open_order(),
+            submitting: false,
+            error: None,
+        });
+        insta::assert_snapshot!("cancel_confirmation", draw(&state));
+    }
 }

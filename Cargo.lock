@@ -2544,8 +2544,10 @@ name = "tickforge"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "dotenvy",
+ "rust_decimal",
  "tickforge-adapter-alpaca",
  "tickforge-application",
  "tickforge-domain",

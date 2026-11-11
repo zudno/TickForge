@@ -106,6 +106,10 @@ impl Watchlist {
         (!self.rows.is_empty()).then_some(self.selected)
     }
 
+    pub fn selected_row(&self) -> Option<&WatchlistRow> {
+        self.rows.get(self.selected)
+    }
+
     /// Selección circular hacia abajo.
     pub fn select_next(&mut self) {
         if !self.rows.is_empty() {

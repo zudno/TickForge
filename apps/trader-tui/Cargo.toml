@@ -16,6 +16,8 @@ tickforge-application.workspace = true
 tickforge-presentation-tui.workspace = true
 tickforge-adapter-alpaca.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+async-trait.workspace = true
+rust_decimal.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
 dotenvy.workspace = true

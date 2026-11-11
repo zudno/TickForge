@@ -74,6 +74,9 @@ Workspace de Cargo con un crate por capa. El compilador hace cumplir las depende
 - Pruebas contra servicios reales (por ejemplo `paper_smoke`): siempre `#[ignore]`, solo lectura,
   con salvaguarda de entorno paper. Se ejecutan a mano:
   `cargo test -p tickforge-adapter-alpaca --test paper_smoke -- --ignored --nocapture`.
+- Única excepción de escritura: `paper_orders_smoke` coloca una compra límite de 1 acción muy
+  por debajo del mercado y la cancela de inmediato, solo en paper. Cualquier prueba nueva que
+  escriba en la cuenta debe seguir esas mismas garantías (no ejecutable, cancelada, paper).
 
 ## Comandos
 
@@ -96,6 +99,10 @@ también (si una licencia nueva es necesaria, agregarla a `deny.toml` con justif
 - El CI (`.github/workflows/ci.yml`) corre `fmt`, `clippy`, `test` (Linux y Windows) y `cargo-deny`;
   un PR solo se fusiona con el CI en verde.
 - Saltos de línea: LF en todo el repositorio (`.gitattributes`).
+- Scripts que verifican y luego commitean: empezar con `set -euo pipefail` y **no mezclar `;` con
+  `&&`**. Si una verificación falla a mitad de cadena, un `git commit` posterior separado por `;`
+  commitea solo lo que ya estaba en el stage (pasó dos veces). Antes de commitear, comprobar que
+  ni `.env`, ni `logs/`, ni `target/` estén en el stage.
 
 ## Entorno
 

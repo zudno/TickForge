@@ -160,3 +160,88 @@ async fn each_order_gets_a_new_client_order_id() {
     assert_ne!(first.client_order_id(), second.client_order_id());
     assert_eq!(harness.broker.order_count(), 2);
 }
+
+// --- Vista previa y confirmación (flujo de la TUI) ---
+
+#[tokio::test]
+async fn preview_estimates_cost_without_sending_anything() {
+    let harness = Harness::new();
+    harness.quote(dec!(99.99), dec!(100));
+
+    let preview = harness
+        .place_order
+        .preview(command(OrderSide::Buy, OrderType::Market, dec!(10)))
+        .await
+        .unwrap();
+
+    assert!(preview.assessment.is_approved());
+    assert_eq!(preview.reference_price.map(|p| p.value()), Some(dec!(100)));
+    assert_eq!(
+        preview.estimated_notional,
+        Some(tickforge_domain::shared::Money::usd(dec!(1000)))
+    );
+    assert_eq!(harness.broker.order_count(), 0);
+    assert!(harness.journal.entries().is_empty());
+}
+
+#[tokio::test]
+async fn preview_lists_risk_violations_instead_of_failing() {
+    let harness = Harness::new();
+    harness.quote(dec!(99.99), dec!(100));
+
+    let preview = harness
+        .place_order
+        .preview(command(OrderSide::Buy, OrderType::Market, dec!(60)))
+        .await
+        .unwrap();
+
+    assert!(!preview.assessment.is_approved());
+    assert!(
+        preview
+            .assessment
+            .violations()
+            .iter()
+            .any(|v| matches!(v, RiskViolation::OrderNotionalExceeded { .. }))
+    );
+    assert_eq!(harness.broker.order_count(), 0);
+}
+
+#[tokio::test]
+async fn confirming_the_same_preview_twice_never_duplicates_the_order() {
+    let harness = Harness::new();
+    harness.quote(dec!(99.99), dec!(100));
+    let preview = harness
+        .place_order
+        .preview(command(OrderSide::Buy, limit(dec!(99)), dec!(1)))
+        .await
+        .unwrap();
+
+    let first = harness
+        .place_order
+        .submit(preview.request.clone())
+        .await
+        .unwrap();
+    let second = harness.place_order.submit(preview.request).await.unwrap();
+
+    assert_eq!(first.id(), second.id());
+    assert_eq!(harness.broker.order_count(), 1);
+}
+
+#[tokio::test]
+async fn submit_re_evaluates_risk_with_fresh_data() {
+    let harness = Harness::new();
+    harness.quote(dec!(99.99), dec!(100));
+    let preview = harness
+        .place_order
+        .preview(command(OrderSide::Buy, OrderType::Market, dec!(1)))
+        .await
+        .unwrap();
+    assert!(preview.assessment.is_approved());
+
+    // El usuario tarda en confirmar y la cotización envejece
+    harness.clock.advance(TimeDelta::seconds(30));
+    let result = harness.place_order.submit(preview.request).await;
+
+    assert!(matches!(result, Err(ApplicationError::RiskRejected(_))));
+    assert_eq!(harness.broker.order_count(), 0);
+}

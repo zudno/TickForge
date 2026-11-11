@@ -14,8 +14,13 @@ pub fn price(value: Option<Price>) -> String {
 }
 
 pub fn decimal_price(value: Decimal) -> String {
+    with_thousands(&plain_price(value))
+}
+
+/// Precio sin separador de miles, apto para editarse en un campo de texto (`1234.50`).
+pub fn plain_price(value: Decimal) -> String {
     let decimals = if value.abs() < Decimal::ONE { 4 } else { 2 };
-    with_thousands(&fixed(value, decimals))
+    fixed(value, decimals)
 }
 
 /// Diferencial de precios: al menos 2 decimales y hasta 4, sin ceros sobrantes

@@ -76,7 +76,7 @@ IEX Cloud cerró en 2024: no usar.
 | 2. Aplicación | Puertos (traits) y casos de uso, probados con mocks y el broker simulado | Casos de uso probados sin red ✅ |
 | 3. Adaptador Alpaca | REST (cuenta, posiciones, órdenes), WebSocket de datos y `trade_updates`, mapeo wire ⇄ dominio | Integración con paper trading |
 | 4. TUI básica | Bucle de eventos, layout, watchlist en vivo, barra de estado | Pantalla funcional ✅ |
-| 5. Órdenes | Ticket, vista previa, modal de confirmación, riesgo pre-trade, cancelación | Comprar/vender en paper |
+| 5. Órdenes | Ticket, vista previa, modal de confirmación, riesgo pre-trade, cancelación | Comprar/vender en paper ✅ |
 | 6. Persistencia | Diario de órdenes, watchlists, reconciliación al iniciar | Auditoría y recuperación |
 | 7. Robustez | Reconexión con backoff, rate limits, idempotencia (`client_order_id`), apagado limpio, kill switch, panic hook | Listo para modo real |
 | 8. Modo real | Bandera explícita + doble confirmación + banner LIVE | v1.0 |
@@ -343,7 +343,18 @@ pub trait SignalGenerator: Send + Sync {
 - [x] Verificado contra Alpaca paper con el mercado abierto (precios, cambio %, flujo en vivo).
 - [ ] Modo simulador sin red para demos (pendiente).
 
-**Fase 4 completa.** Siguiente: fase 5, órdenes (ticket, vista previa, confirmación, cancelación).
+**Fase 4 completa.**
+
+### Fase 5 — Órdenes
+
+- [x] `PlaceOrderUseCase` en dos pasos: `preview` (evalúa riesgo sin enviar) y `submit` (reevalúa con datos frescos y envía la solicitud previsualizada); `execute` sigue disponible para un motor automático.
+- [x] `WatchOrderUpdatesUseCase`: flujo `trade_updates` en la TUI (notificaciones de aceptación, ejecuciones, cancelaciones y rechazos).
+- [x] TUI: ticket (`b`/`s`), confirmación con costo, efecto en la posición y violaciones de riesgo; panel de órdenes abiertas (`Tab`) y cancelación con confirmación (`c`).
+- [x] Composition root: límites de riesgo en `.env`, generador de `client_order_id`, diario provisional en el log (`tickforge::journal`).
+- [x] Verificado contra Alpaca paper: orden límite creada, visible, reintento idempotente, eventos `Accepted`/`Canceled` por WebSocket y cancelación.
+- [ ] Diario persistente en SQLite y reconciliación al iniciar (fase 6).
+
+**Fase 5 completa.** Siguiente: fase 6, persistencia (diario de órdenes, watchlists, reconciliación).
 
 ## 9. Decisiones de modelado del dominio
 
@@ -454,3 +465,19 @@ pub trait SignalGenerator: Send + Sync {
 | Terminal | `ratatui::try_init`/`try_restore`, que restauran la terminal incluso ante un pánico. Logs a `logs/tickforge.log.AAAA-MM-DD`, nunca a la pantalla. |
 | Pruebas | Reducer, keymap, watchlist y formato con pruebas unitarias; pantallas con snapshots de `insta` sobre `TestBackend` (`src/ui/snapshots/`). |
 | Dependencias | `ratatui` 0.30 + `crossterm` 0.29 (0.29 de ratatui arrastraba `paste`, sin mantenimiento). MSRV subido a 1.88 para poder usar `time` 0.3.47 (RUSTSEC-2026-0009). |
+
+## 13. Decisiones del flujo de órdenes
+
+| Concepto | Decisión |
+|---|---|
+| Dos pasos | `preview` construye la solicitud (con su `ClientOrderId`), consulta cuenta, posición y cotización, y evalúa la política **sin enviar**. `submit` envía exactamente esa solicitud: confirmar dos veces nunca duplica la orden (verificado contra Alpaca). |
+| Riesgo dos veces | `submit` vuelve a evaluar la política con datos frescos: entre la vista previa y la confirmación el precio o el saldo pueden cambiar. |
+| Confirmación | No se puede confirmar una vista previa con violaciones; se muestran todas y `Esc` vuelve al ticket con los datos para corregir. Mientras se espera al broker, `Esc` y un segundo `Enter` no hacen nada. |
+| Ticket | Cantidad y precio se capturan como texto (solo dígitos y un punto) y se validan al pedir la vista previa con mensajes en español. Al cambiar a límite se propone el ask (compra) o el bid (venta). |
+| Teclado en ventanas | El ticket captura dígitos, flechas, Tab y Enter; letras como `q` o `b` no tienen efecto mientras se escribe. Las confirmaciones solo aceptan una respuesta explícita. |
+| Órdenes abiertas | Panel propio; `Tab` cambia el foco y `c` pide cancelar la seleccionada (con confirmación). |
+| Eventos de órdenes | El flujo `trade_updates` genera notificaciones y pide refrescar el portafolio, agrupando ráfagas (máximo un refresco por segundo). Las órdenes en pantalla salen del portafolio REST, así no hay doble conteo de ejecuciones (ver limitación de `apply_to`). |
+| Mercado cerrado | La confirmación avisa que la orden esperará a la apertura. |
+| Límites de riesgo | `.env`: `TICKFORGE_MAX_ORDER_NOTIONAL` (5000), `TICKFORGE_MAX_POSITION_NOTIONAL` (20000), `TICKFORGE_MAX_PRICE_DEVIATION_PCT` (5), `TICKFORGE_MAX_QUOTE_AGE_SECS` (15). |
+| Diario provisional | `TracingOrderJournal` escribe cada intención, envío, rechazo y cancelación en el log con destino `tickforge::journal` hasta tener SQLite (fase 6). |
+| `client_order_id` | `tf-<milisegundos>-<secuencia>`: único entre reinicios y dentro de la sesión. |
