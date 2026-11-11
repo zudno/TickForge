@@ -2,6 +2,7 @@
 //! en los componentes.
 
 mod account_bar;
+mod add_symbol;
 mod cancel_confirm;
 mod help_overlay;
 mod modal;
@@ -55,6 +56,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Overlay::Ticket(ticket) => order_ticket::render(frame, ticket),
         Overlay::Preview(preview) => order_preview::render(frame, state, preview),
         Overlay::CancelConfirm(confirmation) => cancel_confirm::render(frame, confirmation),
+        Overlay::AddSymbol(input) => add_symbol::render(frame, input),
     }
 }
 

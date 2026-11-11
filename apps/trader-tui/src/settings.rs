@@ -25,6 +25,8 @@ pub struct Settings {
     pub watchlist: Vec<Symbol>,
     pub data_feed: DataFeed,
     pub log_dir: PathBuf,
+    /// Archivo SQLite con el diario de órdenes y la watchlist.
+    pub database_path: PathBuf,
     pub risk_limits: RiskLimits,
     pub alpaca_key_id: String,
     pub alpaca_secret_key: String,
@@ -61,6 +63,9 @@ impl Settings {
             mode,
             watchlist,
             data_feed,
+            database_path: optional("TICKFORGE_DATA_DIR")
+                .map_or_else(|| PathBuf::from("data"), PathBuf::from)
+                .join("tickforge.db"),
             log_dir: optional("TICKFORGE_LOG_DIR")
                 .map_or_else(|| PathBuf::from("logs"), PathBuf::from),
             risk_limits: risk_limits()?,

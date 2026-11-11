@@ -111,7 +111,7 @@ fn startup_opens_both_streams() {
     let mut state = state();
     let commands = initial_commands(&mut state);
 
-    assert_eq!(commands.len(), 4);
+    assert_eq!(commands.len(), 5);
     assert!(commands.contains(&Command::StartOrderStream));
 }
 
@@ -417,4 +417,115 @@ fn quit_sets_the_exit_flag() {
     let mut state = state();
     reduce(&mut state, Action::Quit);
     assert!(state.should_quit);
+}
+
+// --- Watchlist y reconciliación ---
+
+fn report(
+    recovered: Vec<Order>,
+    not_submitted: usize,
+) -> tickforge_application::use_cases::trading::ReconciliationReport {
+    tickforge_application::use_cases::trading::ReconciliationReport {
+        checked: recovered.len() + not_submitted,
+        recovered,
+        not_submitted: (0..not_submitted)
+            .map(|index| ClientOrderId::new(&format!("tf-{index}")).unwrap())
+            .collect(),
+        unresolved: Vec::new(),
+    }
+}
+
+#[test]
+fn startup_reconciles_before_anything_else() {
+    let mut state = state();
+    assert_eq!(
+        initial_commands(&mut state).first(),
+        Some(&Command::ReconcileOrders)
+    );
+}
+
+#[test]
+fn adding_a_symbol_validates_text_then_asks_the_use_case() {
+    let mut state = state();
+    reduce(&mut state, Action::OpenAddSymbol);
+
+    // Vacío: no se envía nada
+    assert!(reduce(&mut state, Action::Confirm).is_empty());
+
+    for character in "tsla".chars() {
+        reduce(&mut state, Action::AddSymbolInput(character));
+    }
+    let commands = reduce(&mut state, Action::Confirm);
+    assert_eq!(
+        commands,
+        vec![Command::AddSymbol {
+            current: vec![aapl(), Symbol::new("SPY").unwrap()],
+            symbol: Symbol::new("TSLA").unwrap(),
+        }]
+    );
+
+    // Confirmado por el caso de uso: se cierra, se agrega y se reabre el flujo en vivo
+    let updated = vec![
+        aapl(),
+        Symbol::new("SPY").unwrap(),
+        Symbol::new("TSLA").unwrap(),
+    ];
+    let commands = reduce(&mut state, Action::WatchlistChanged(updated.clone()));
+    assert_eq!(state.overlay, Overlay::None);
+    assert_eq!(state.watchlist.symbols(), updated);
+    assert_eq!(commands, vec![Command::StartMarketStream(updated)]);
+}
+
+#[test]
+fn a_rejected_symbol_keeps_the_input_open_with_the_reason() {
+    let mut state = state();
+    reduce(&mut state, Action::OpenAddSymbol);
+    for character in "zzzz".chars() {
+        reduce(&mut state, Action::AddSymbolInput(character));
+    }
+    reduce(&mut state, Action::Confirm);
+
+    reduce(
+        &mut state,
+        Action::WatchlistChangeFailed("no hay datos de mercado para ZZZZ".to_owned()),
+    );
+    let Overlay::AddSymbol(input) = &state.overlay else {
+        panic!("se esperaba la ventana de agregar símbolo");
+    };
+    assert!(!input.awaiting);
+    assert_eq!(input.text, "ZZZZ");
+    assert!(input.error.as_deref().unwrap().contains("ZZZZ"));
+}
+
+#[test]
+fn removing_requires_the_watchlist_to_be_focused() {
+    let mut state = state();
+    assert!(matches!(
+        reduce(&mut state, Action::RemoveSelectedSymbol).as_slice(),
+        [Command::RemoveSymbol { symbol, .. }] if *symbol == aapl()
+    ));
+
+    reduce(&mut state, Action::FocusNextPanel);
+    assert!(reduce(&mut state, Action::RemoveSelectedSymbol).is_empty());
+}
+
+#[test]
+fn reconciliation_results_are_reported_only_when_something_was_pending() {
+    let mut state = state();
+    reduce(
+        &mut state,
+        Action::ReconciliationFinished(report(Vec::new(), 0)),
+    );
+    assert!(state.notifications.latest().is_none());
+
+    let commands = reduce(
+        &mut state,
+        Action::ReconciliationFinished(report(vec![open_order()], 1)),
+    );
+    assert_eq!(
+        state.notifications.latest().unwrap().message,
+        "Reconciliación: 1 recuperadas del broker, 1 nunca llegaron"
+    );
+    // Hay órdenes recuperadas: se refresca la cuenta para mostrarlas
+    assert_eq!(commands, vec![Command::LoadPortfolio]);
 }

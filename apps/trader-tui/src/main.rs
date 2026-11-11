@@ -18,17 +18,15 @@ async fn main() -> anyhow::Result<()> {
     // como texto normal en la consola
     let settings = Settings::load()?;
     let _log_guard = telemetry::init(&settings.log_dir)?;
-    tracing::info!(
-        mode = ?settings.mode,
-        symbols = settings.watchlist.len(),
-        "iniciando TickForge"
-    );
+    tracing::info!(mode = ?settings.mode, "iniciando TickForge");
 
-    let (services, config) = bootstrap::build(&settings)?;
-    tickforge_presentation_tui::run(services, config)
+    let application = bootstrap::build(&settings).await?;
+    let result = tickforge_presentation_tui::run(application.services, application.config)
         .await
-        .context("la interfaz de terminal terminó con un error")?;
+        .context("la interfaz de terminal terminó con un error");
 
+    // Cerrar la base aunque la TUI haya fallado, para que el diario quede completo en disco
+    application.store.close().await;
     tracing::info!("TickForge cerrado");
-    Ok(())
+    result
 }

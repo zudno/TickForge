@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use tickforge_application::ports::{JournalEntry, JournalError, OrderJournal};
+use tickforge_domain::trading::{ClientOrderId, OrderRequest};
 
 use crate::lock::lock;
 
@@ -37,5 +39,34 @@ impl OrderJournal for InMemoryOrderJournal {
         }
         lock(&self.entries).push(entry);
         Ok(())
+    }
+
+    async fn pending_intents(&self) -> Result<Vec<OrderRequest>, JournalError> {
+        let entries = lock(&self.entries);
+        let resolved: HashSet<&ClientOrderId> = entries
+            .iter()
+            .filter(|entry| entry.resolves_intent())
+            .filter_map(JournalEntry::client_order_id)
+            .collect();
+
+        Ok(entries
+            .iter()
+            .filter_map(|entry| match entry {
+                JournalEntry::Intent { request, .. }
+                    if !resolved.contains(request.client_order_id()) =>
+                {
+                    Some(request.clone())
+                }
+                _ => None,
+            })
+            .collect())
+    }
+}
+
+/// Registra entradas directamente (sin pasar por un caso de uso) para preparar escenarios
+/// de prueba, por ejemplo una intención que quedó sin resultado por una caída.
+impl InMemoryOrderJournal {
+    pub fn seed(&self, entry: JournalEntry) {
+        lock(&self.entries).push(entry);
     }
 }

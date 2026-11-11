@@ -15,6 +15,35 @@ pub enum Overlay {
     Preview(PreviewOverlay),
     /// Confirmación de cancelación de una orden abierta.
     CancelConfirm(CancelConfirmation),
+    /// Captura de un símbolo para agregarlo a la watchlist.
+    AddSymbol(SymbolInput),
+}
+
+/// Campo de texto para un símbolo nuevo (se normaliza a mayúsculas al escribir).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SymbolInput {
+    pub text: String,
+    pub error: Option<String>,
+    /// Se está verificando el símbolo con el proveedor de datos.
+    pub awaiting: bool,
+}
+
+impl SymbolInput {
+    /// Longitud máxima de un símbolo (igual que `Symbol::MAX_LEN`).
+    const MAX_LEN: usize = 10;
+
+    pub fn input(&mut self, character: char) {
+        let accepted = character.is_ascii_alphanumeric() || character == '.' || character == '-';
+        if accepted && self.text.len() < Self::MAX_LEN {
+            self.text.push(character.to_ascii_uppercase());
+            self.error = None;
+        }
+    }
+
+    pub fn backspace(&mut self) {
+        self.text.pop();
+        self.error = None;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

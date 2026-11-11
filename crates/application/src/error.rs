@@ -5,7 +5,7 @@ use tickforge_domain::DomainError;
 use tickforge_domain::risk::RiskViolation;
 use tickforge_domain::trading::OrderId;
 
-use crate::ports::{BrokerError, JournalError, MarketDataError};
+use crate::ports::{BrokerError, JournalError, MarketDataError, RepositoryError};
 
 /// Error de un caso de uso. Agrupa los errores de dominio y de cada puerto para que la TUI
 /// pueda decidir cómo mostrarlos.
@@ -29,4 +29,11 @@ pub enum ApplicationError {
 
     #[error(transparent)]
     Journal(#[from] JournalError),
+
+    #[error(transparent)]
+    Repository(#[from] RepositoryError),
+
+    /// Cambio de watchlist no permitido (duplicado, sin datos, límite alcanzado...).
+    #[error("{0}")]
+    InvalidWatchlist(String),
 }

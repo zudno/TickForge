@@ -8,7 +8,7 @@ use tickforge_application::ports::{BrokerError, BrokerGateway, OrderUpdate};
 use tickforge_domain::market::MarketClock;
 use tickforge_domain::portfolio::{Account, Position};
 use tickforge_domain::shared::Symbol;
-use tickforge_domain::trading::{Order, OrderId, OrderRequest};
+use tickforge_domain::trading::{ClientOrderId, Order, OrderId, OrderRequest};
 
 use crate::config::{AlpacaConfig, AlpacaCredentials};
 use crate::error::AlpacaSetupError;
@@ -85,16 +85,16 @@ impl AlpacaBrokerGateway {
         Ok(socket)
     }
 
-    async fn order_by_client_id(&self, request: &OrderRequest) -> Result<Order, BrokerError> {
-        let wire: OrderWire = self
-            .http
-            .get(
-                "/v2/orders:by_client_order_id",
-                &[("client_order_id", request.client_order_id().as_str())],
-            )
-            .await
-            .map_err(broker_error)?;
-        mapping::order(wire).map_err(invalid_response)
+    /// Recupera la orden ya existente tras un `client_order_id` duplicado.
+    async fn existing_order(&self, request: &OrderRequest) -> Result<Order, BrokerError> {
+        self.order_by_client_order_id(request.client_order_id())
+            .await?
+            .ok_or_else(|| {
+                BrokerError::InvalidResponse(
+                    "Alpaca reportó un client_order_id duplicado pero no encontró la orden"
+                        .to_owned(),
+                )
+            })
     }
 }
 
@@ -155,6 +155,25 @@ impl BrokerGateway for AlpacaBrokerGateway {
         }
     }
 
+    async fn order_by_client_order_id(
+        &self,
+        client_order_id: &ClientOrderId,
+    ) -> Result<Option<Order>, BrokerError> {
+        let result = self
+            .http
+            .get::<OrderWire>(
+                "/v2/orders:by_client_order_id",
+                &[("client_order_id", client_order_id.as_str())],
+            )
+            .await;
+        match result {
+            Ok(wire) => mapping::order(wire).map(Some).map_err(invalid_response),
+            // 404: la orden nunca llegó a Alpaca
+            Err(error) if error.is_status(StatusCode::NOT_FOUND) => Ok(None),
+            Err(error) => Err(broker_error(error)),
+        }
+    }
+
     async fn submit_order(&self, request: &OrderRequest) -> Result<Order, BrokerError> {
         let body = mapping::new_order_body(request);
         match self.http.post::<_, OrderWire>("/v2/orders", &body).await {
@@ -164,7 +183,7 @@ impl BrokerGateway for AlpacaBrokerGateway {
                 if status == StatusCode::UNPROCESSABLE_ENTITY.as_u16()
                     && message.contains(DUPLICATE_CLIENT_ORDER_ID) =>
             {
-                self.order_by_client_id(request).await
+                self.existing_order(request).await
             }
             Err(error) => Err(broker_error(error)),
         }

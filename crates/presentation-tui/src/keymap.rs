@@ -36,6 +36,18 @@ pub fn map_event(event: &Event, state: &AppState) -> Option<Action> {
             KeyCode::Esc | KeyCode::Char('n') => Some(Action::CloseOverlay),
             _ => None,
         },
+        // Al escribir un símbolo, todas las letras son texto (incluidas `q`, `b` o `s`)
+        Overlay::AddSymbol(_) => match key.code {
+            KeyCode::Enter => Some(Action::Confirm),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Backspace => Some(Action::AddSymbolBackspace),
+            KeyCode::Char(character)
+                if character.is_ascii_alphanumeric() || character == '.' || character == '-' =>
+            {
+                Some(Action::AddSymbolInput(character))
+            }
+            _ => None,
+        },
     }
 }
 
@@ -48,6 +60,8 @@ fn main_screen(key: &KeyEvent) -> Option<Action> {
         KeyCode::Char('b') => Some(Action::OpenTicket(OrderSide::Buy)),
         KeyCode::Char('s') => Some(Action::OpenTicket(OrderSide::Sell)),
         KeyCode::Char('c') => Some(Action::RequestCancelSelected),
+        KeyCode::Char('a') => Some(Action::OpenAddSymbol),
+        KeyCode::Char('d') => Some(Action::RemoveSelectedSymbol),
         KeyCode::Char('r') => Some(Action::Refresh),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         KeyCode::Esc => Some(Action::CloseOverlay),
