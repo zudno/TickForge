@@ -11,13 +11,14 @@ use chrono::{DateTime, TimeDelta, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use tickforge_adapter_paper_sim::{
-    InMemoryOrderJournal, InMemoryWatchlistRepository, ManualClock, PaperBroker,
-    RecordingEventPublisher, SequentialClientOrderIdGenerator,
+    InMemoryKillSwitchRepository, InMemoryOrderJournal, InMemoryWatchlistRepository, ManualClock,
+    PaperBroker, RecordingEventPublisher, SequentialClientOrderIdGenerator,
 };
 use tickforge_application::use_cases::market::ManageWatchlistUseCase;
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
-    CancelOrderUseCase, PlaceOrderCommand, PlaceOrderUseCase, ReconcileOrdersUseCase, TradingPorts,
+    CancelOrderUseCase, KillSwitchUseCase, PlaceOrderCommand, PlaceOrderUseCase,
+    ReconcileOrdersUseCase, TradingPorts,
 };
 use tickforge_domain::market::Quote;
 use tickforge_domain::risk::{RiskLimits, RiskPolicy};
@@ -37,6 +38,8 @@ pub struct Harness {
     pub reconcile_orders: ReconcileOrdersUseCase,
     pub watchlist_repository: Arc<InMemoryWatchlistRepository>,
     pub watchlist: ManageWatchlistUseCase,
+    pub kill_switch_repository: Arc<InMemoryKillSwitchRepository>,
+    pub kill_switch: KillSwitchUseCase,
 }
 
 impl Harness {
@@ -48,6 +51,7 @@ impl Harness {
         let journal = Arc::new(InMemoryOrderJournal::new());
         let events = Arc::new(RecordingEventPublisher::new());
         let watchlist_repository = Arc::new(InMemoryWatchlistRepository::new());
+        let kill_switch = Arc::new(InMemoryKillSwitchRepository::new());
 
         let ports = TradingPorts {
             broker: broker.clone(),
@@ -56,6 +60,7 @@ impl Harness {
             events: events.clone(),
             clock: clock.clone(),
             client_order_ids: Arc::new(SequentialClientOrderIdGenerator::new("tf-test")),
+            kill_switch: kill_switch.clone(),
         };
         let limits = RiskLimits::new(
             Money::usd(dec!(5000)),
@@ -68,7 +73,9 @@ impl Harness {
         Self {
             place_order: PlaceOrderUseCase::new(ports.clone(), RiskPolicy::new(limits)),
             cancel_order: CancelOrderUseCase::new(ports.clone()),
-            reconcile_orders: ReconcileOrdersUseCase::new(ports),
+            reconcile_orders: ReconcileOrdersUseCase::new(ports.clone()),
+            kill_switch: KillSwitchUseCase::new(ports),
+            kill_switch_repository: kill_switch,
             watchlist: ManageWatchlistUseCase::new(watchlist_repository.clone(), broker.clone()),
             watchlist_repository,
             portfolio: GetPortfolioSnapshotUseCase::new(broker.clone()),

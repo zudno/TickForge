@@ -1,6 +1,7 @@
 //! Casos de uso de trading: colocar y cancelar órdenes.
 
 mod cancel_order;
+mod kill_switch;
 mod place_order;
 mod reconcile_orders;
 mod watch_order_updates;
@@ -11,10 +12,11 @@ use tickforge_domain::trading::ClientOrderId;
 
 use crate::ports::{
     ApplicationEvent, BrokerGateway, ClientOrderIdGenerator, Clock, EventPublisher, JournalEntry,
-    MarketDataFeed, OrderJournal,
+    KillSwitchRepository, MarketDataFeed, OrderJournal,
 };
 
 pub use cancel_order::CancelOrderUseCase;
+pub use kill_switch::{KillSwitchReport, KillSwitchUseCase};
 pub use place_order::{OrderPreview, PlaceOrderCommand, PlaceOrderUseCase};
 pub use reconcile_orders::{ReconcileOrdersUseCase, ReconciliationReport};
 pub use watch_order_updates::WatchOrderUpdatesUseCase;
@@ -31,6 +33,8 @@ pub struct TradingPorts {
     pub events: Arc<dyn EventPublisher>,
     pub clock: Arc<dyn Clock>,
     pub client_order_ids: Arc<dyn ClientOrderIdGenerator>,
+    /// Estado del kill switch; la política de riesgo lo consulta en cada orden.
+    pub kill_switch: Arc<dyn KillSwitchRepository>,
 }
 
 impl TradingPorts {

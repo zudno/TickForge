@@ -4,8 +4,11 @@ use chrono::{DateTime, Utc};
 use tickforge_application::ports::{MarketEvent, OrderUpdate};
 use tickforge_application::use_cases::market::SymbolSnapshot;
 use tickforge_application::use_cases::portfolio::PortfolioSnapshot;
-use tickforge_application::use_cases::trading::{OrderPreview, ReconciliationReport};
+use tickforge_application::use_cases::trading::{
+    KillSwitchReport, OrderPreview, ReconciliationReport,
+};
 use tickforge_domain::market::MarketClock;
+use tickforge_domain::risk::KillSwitch;
 use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::{Order, OrderId, OrderSide};
 
@@ -32,6 +35,8 @@ pub enum Action {
     TicketInput(char),
     TicketBackspace,
     RequestCancelSelected,
+    /// `!`: abre la confirmación para activar o desactivar el kill switch.
+    OpenKillSwitch,
 
     // --- Usuario: watchlist ---
     OpenAddSymbol,
@@ -79,4 +84,13 @@ pub enum Action {
     WatchlistChangeFailed(String),
     ReconciliationFinished(ReconciliationReport),
     ReconciliationFailed(String),
+
+    // --- Kill switch ---
+    KillSwitchLoaded(KillSwitch),
+    KillSwitchEngaged {
+        state: KillSwitch,
+        report: KillSwitchReport,
+    },
+    KillSwitchReleased,
+    KillSwitchFailed(String),
 }

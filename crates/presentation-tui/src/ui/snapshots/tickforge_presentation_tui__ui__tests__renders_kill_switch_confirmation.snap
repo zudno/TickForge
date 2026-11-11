@@ -1,0 +1,28 @@
+---
+source: crates/presentation-tui/src/ui/tests.rs
+expression: draw(&state)
+---
+┌ TickForge ─ Alpaca ──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│Equity 101,250.75 │ Efectivo 99,355.75 │ Poder de compra 99,355.75 │ P&L día +1,250.75 (+1.25%)                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Watchlist ─────────────────────────────────────────────────────────┐┌ Posiciones (1) ────────────────────────────────┐
+│Símbolo     Último    Cambio       Bid       Ask  Spread        Hora││Símbolo     Cant.   Promedio                 P&L│
+│AAPL        189.11    +1.13%    189.10    189.12    0.02 10:00:00 ET││AAPL           10     185.00              +41.10│
+│SPY         512.40         —         —         —       — 10:00:00 ET││                                                │
+│                           ┌ ⛔  Activar kill switch ──────────────────────────────────────┐                           │
+│                           │Esto hará de inmediato:                                       │                           │
+│                           │  • No hay órdenes abiertas que cancelar                      │                           │
+│                           │  • Bloquear toda orden nueva hasta que lo desactives         │                           │
+│                           │                                                              │───────────────────────────┘
+│                           │Las posiciones abiertas NO se cierran.                        │ ──────────────────────────┐
+│                           │El bloqueo se guarda: sigue activo aunque cierres TickForge.  │· b comprar · s vender     │
+│                           │                                                              │                           │
+│                           │Enter activar · Esc cancelar                                  │                           │
+│                           └──────────────────────────────────────────────────────────────┘                           │
+│                                                                    ││                                                │
+│                                                                    ││                                                │
+│                                                                    ││                                                │
+│                                                                    ││                                                │
+│                                                                    ││                                                │
+└────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────┘
+ PAPER  Mercado ABIERTO · cierra en 6h 00m │ ○ Conectando… │ 10:00:00 ET │ Datos en tiempo real conect ? ayuda  q salir

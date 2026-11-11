@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use crate::theme;
 use crate::ui::modal;
 
-const SHORTCUTS: [(&str, &str); 12] = [
+const SHORTCUTS: [(&str, &str); 13] = [
     ("j / ↓", "Bajar en el panel activo"),
     ("k / ↑", "Subir en el panel activo"),
     ("Tab", "Cambiar entre watchlist y órdenes"),
@@ -14,6 +14,7 @@ const SHORTCUTS: [(&str, &str); 12] = [
     ("c", "Cancelar la orden seleccionada"),
     ("a", "Agregar un símbolo a la watchlist"),
     ("d", "Quitar el símbolo seleccionado"),
+    ("!", "Kill switch: cancelar todo y bloquear órdenes"),
     ("r", "Actualizar y reconectar"),
     ("?", "Mostrar u ocultar esta ayuda"),
     ("Esc", "Cerrar o volver"),

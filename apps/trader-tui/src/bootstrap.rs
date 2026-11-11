@@ -6,14 +6,16 @@ use anyhow::Context;
 use tickforge_adapter_alpaca::{
     AlpacaBrokerGateway, AlpacaConfig, AlpacaCredentials, AlpacaMarketData,
 };
-use tickforge_adapter_sqlite::{SqliteOrderJournal, SqliteStore, SqliteWatchlistRepository};
+use tickforge_adapter_sqlite::{
+    SqliteKillSwitchRepository, SqliteOrderJournal, SqliteStore, SqliteWatchlistRepository,
+};
 use tickforge_application::ports::{BrokerGateway, Clock, MarketDataFeed};
 use tickforge_application::use_cases::market::{
     GetMarketClockUseCase, ManageWatchlistUseCase, WatchMarketUseCase,
 };
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
-    CancelOrderUseCase, PlaceOrderUseCase, ReconcileOrdersUseCase, TradingPorts,
+    CancelOrderUseCase, KillSwitchUseCase, PlaceOrderUseCase, ReconcileOrdersUseCase, TradingPorts,
     WatchOrderUpdatesUseCase,
 };
 use tickforge_domain::risk::RiskPolicy;
@@ -75,6 +77,7 @@ pub async fn build(settings: &Settings) -> anyhow::Result<Application> {
         events: Arc::new(TracingEventPublisher),
         clock: Arc::clone(&clock),
         client_order_ids: Arc::new(TimestampClientOrderIdGenerator::new(Arc::clone(&clock))),
+        kill_switch: Arc::new(SqliteKillSwitchRepository::new(store.clone())),
     };
 
     let services = TuiServices {
@@ -88,7 +91,8 @@ pub async fn build(settings: &Settings) -> anyhow::Result<Application> {
         )),
         cancel_order: Arc::new(CancelOrderUseCase::new(trading_ports.clone())),
         order_updates: Arc::new(WatchOrderUpdatesUseCase::new(broker)),
-        reconcile_orders: Arc::new(ReconcileOrdersUseCase::new(trading_ports)),
+        reconcile_orders: Arc::new(ReconcileOrdersUseCase::new(trading_ports.clone())),
+        kill_switch: Arc::new(KillSwitchUseCase::new(trading_ports)),
         clock,
     };
     let config = TuiConfig {

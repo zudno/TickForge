@@ -189,3 +189,44 @@ async fn data_survives_closing_and_reopening_the_file() {
         let _ = std::fs::remove_dir_all(directory);
     }
 }
+
+// --- Kill switch (fase 7) ---
+
+#[tokio::test]
+async fn kill_switch_is_released_until_engaged_and_survives_reopening() {
+    use tickforge_adapter_sqlite::SqliteKillSwitchRepository;
+    use tickforge_application::ports::KillSwitchRepository;
+    use tickforge_domain::risk::KillSwitch;
+
+    let path = temp_database();
+    let engaged = KillSwitch::engaged(at(1_700_000_000), "pánico de prueba");
+
+    {
+        let store = SqliteStore::open(&path).await.unwrap();
+        let repository = SqliteKillSwitchRepository::new(store.clone());
+        assert_eq!(repository.load().await.unwrap(), KillSwitch::Released);
+        repository.save(&engaged).await.unwrap();
+        // El diario acepta las entradas del kill switch
+        SqliteOrderJournal::new(store.clone())
+            .append(JournalEntry::KillSwitchEngaged {
+                reason: "pánico de prueba".to_owned(),
+                at: at(1_700_000_000),
+            })
+            .await
+            .unwrap();
+        store.close().await;
+    }
+
+    // Tras "reiniciar" la aplicación, el bloqueo sigue activo
+    let store = SqliteStore::open(&path).await.unwrap();
+    let repository = SqliteKillSwitchRepository::new(store.clone());
+    assert_eq!(repository.load().await.unwrap(), engaged);
+
+    repository.save(&KillSwitch::Released).await.unwrap();
+    assert_eq!(repository.load().await.unwrap(), KillSwitch::Released);
+    store.close().await;
+
+    if let Some(directory) = path.parent() {
+        let _ = std::fs::remove_dir_all(directory);
+    }
+}

@@ -11,8 +11,8 @@ use tickforge_application::use_cases::market::{
 };
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
-    CancelOrderUseCase, PlaceOrderCommand, PlaceOrderUseCase, ReconcileOrdersUseCase,
-    WatchOrderUpdatesUseCase,
+    CancelOrderUseCase, KillSwitchUseCase, PlaceOrderCommand, PlaceOrderUseCase,
+    ReconcileOrdersUseCase, WatchOrderUpdatesUseCase,
 };
 use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::{OrderId, OrderRequest};
@@ -34,6 +34,9 @@ pub enum Command {
     SubmitOrder(OrderRequest),
     CancelOrder(OrderId),
     ReconcileOrders,
+    LoadKillSwitch,
+    EngageKillSwitch,
+    ReleaseKillSwitch,
     AddSymbol {
         current: Vec<Symbol>,
         symbol: Symbol,
@@ -55,6 +58,7 @@ pub struct TuiServices {
     pub cancel_order: Arc<CancelOrderUseCase>,
     pub order_updates: Arc<WatchOrderUpdatesUseCase>,
     pub reconcile_orders: Arc<ReconcileOrdersUseCase>,
+    pub kill_switch: Arc<KillSwitchUseCase>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -138,6 +142,52 @@ impl CommandExecutor {
                             tracing::warn!(%error, %order_id, "no se pudo cancelar la orden");
                             Action::OrderCancelFailed(describe(&error))
                         }
+                    }
+                });
+            }
+            Command::LoadKillSwitch => {
+                let use_case = Arc::clone(&services.kill_switch);
+                self.spawn(async move {
+                    match use_case.status().await {
+                        Ok(state) => Action::KillSwitchLoaded(state),
+                        Err(error) => Action::KillSwitchFailed(describe(&error)),
+                    }
+                });
+            }
+            Command::EngageKillSwitch => {
+                let use_case = Arc::clone(&services.kill_switch);
+                self.spawn(async move {
+                    let engaged = match use_case.engage("activado desde la TUI").await {
+                        Ok(report) => report,
+                        Err(error) => {
+                            tracing::error!(%error, "no se pudo activar el kill switch");
+                            return Action::KillSwitchFailed(describe(&error));
+                        }
+                    };
+                    tracing::warn!(
+                        canceled = engaged.canceled.len(),
+                        failed = engaged.failed.len(),
+                        "kill switch activado"
+                    );
+                    // Se relee el estado guardado para mostrar la hora exacta de activación
+                    match use_case.status().await {
+                        Ok(state) => Action::KillSwitchEngaged {
+                            state,
+                            report: engaged,
+                        },
+                        Err(error) => Action::KillSwitchFailed(describe(&error)),
+                    }
+                });
+            }
+            Command::ReleaseKillSwitch => {
+                let use_case = Arc::clone(&services.kill_switch);
+                self.spawn(async move {
+                    match use_case.release().await {
+                        Ok(()) => {
+                            tracing::warn!("kill switch desactivado");
+                            Action::KillSwitchReleased
+                        }
+                        Err(error) => Action::KillSwitchFailed(describe(&error)),
                     }
                 });
             }

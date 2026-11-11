@@ -13,6 +13,9 @@ pub enum RiskViolation {
     #[error("la cuenta tiene la operación bloqueada por el broker")]
     TradingBlocked,
 
+    #[error("el kill switch está activo ({reason}): no se aceptan órdenes nuevas")]
+    KillSwitchEngaged { reason: String },
+
     #[error("la cotización tiene {age_ms} ms de antigüedad (máximo {max_ms} ms)")]
     StaleQuote { age_ms: i64, max_ms: i64 },
 

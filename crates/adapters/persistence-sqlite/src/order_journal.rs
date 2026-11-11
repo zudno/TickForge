@@ -112,6 +112,17 @@ fn to_row(entry: &JournalEntry) -> JournalRow {
                 ..JournalRow::default()
             }
         }
+        JournalEntry::KillSwitchEngaged { reason, at } => JournalRow {
+            recorded_at: timestamp(*at),
+            kind: "kill_switch_engaged",
+            detail: Some(reason.clone()),
+            ..JournalRow::default()
+        },
+        JournalEntry::KillSwitchReleased { at } => JournalRow {
+            recorded_at: timestamp(*at),
+            kind: "kill_switch_released",
+            ..JournalRow::default()
+        },
     }
 }
 

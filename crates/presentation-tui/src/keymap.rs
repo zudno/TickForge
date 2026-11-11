@@ -36,6 +36,12 @@ pub fn map_event(event: &Event, state: &AppState) -> Option<Action> {
             KeyCode::Esc | KeyCode::Char('n') => Some(Action::CloseOverlay),
             _ => None,
         },
+        // El kill switch solo responde a una confirmación explícita
+        Overlay::KillSwitch(_) => match key.code {
+            KeyCode::Enter => Some(Action::Confirm),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            _ => None,
+        },
         // Al escribir un símbolo, todas las letras son texto (incluidas `q`, `b` o `s`)
         Overlay::AddSymbol(_) => match key.code {
             KeyCode::Enter => Some(Action::Confirm),
@@ -61,6 +67,7 @@ fn main_screen(key: &KeyEvent) -> Option<Action> {
         KeyCode::Char('s') => Some(Action::OpenTicket(OrderSide::Sell)),
         KeyCode::Char('c') => Some(Action::RequestCancelSelected),
         KeyCode::Char('a') => Some(Action::OpenAddSymbol),
+        KeyCode::Char('!') => Some(Action::OpenKillSwitch),
         KeyCode::Char('d') => Some(Action::RemoveSelectedSymbol),
         KeyCode::Char('r') => Some(Action::Refresh),
         KeyCode::Char('?') => Some(Action::ToggleHelp),

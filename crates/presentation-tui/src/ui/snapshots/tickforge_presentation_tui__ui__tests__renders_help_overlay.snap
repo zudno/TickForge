@@ -15,14 +15,14 @@ expression: draw(&state)
 │                   │           c  Cancelar la orden seleccionada                                  │                   │
 │                   │           a  Agregar un símbolo a la watchlist                               │───────────────────┘
 │                   │           d  Quitar el símbolo seleccionado                                  │───────────────────┐
-│                   │           r  Actualizar y reconectar                                         │rar · s vender     │
+│                   │           !  Kill switch: cancelar todo y bloquear órdenes                   │rar · s vender     │
+│                   │           r  Actualizar y reconectar                                         │                   │
 │                   │           ?  Mostrar u ocultar esta ayuda                                    │                   │
 │                   │         Esc  Cerrar o volver                                                 │                   │
 │                   │  q / Ctrl+C  Salir                                                           │                   │
 │                   │                                                                              │                   │
 │                   │Toda orden muestra su costo y pasa la política de riesgo antes de enviarse    │                   │
 │                   └──────────────────────────────────────────────────────────────────────────────┘                   │
-│                                                                    ││                                                │
 │                                                                    ││                                                │
 └────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────┘
  PAPER  Mercado ABIERTO · cierra en 6h 00m │ ○ Conectando… │ 10:00:00 ET │ Datos en tiempo real conect ? ayuda  q salir

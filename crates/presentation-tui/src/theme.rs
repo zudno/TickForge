@@ -40,6 +40,14 @@ pub fn live_badge() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+/// Insignia del kill switch activo: imposible de pasar por alto.
+pub fn kill_switch_badge() -> Style {
+    Style::new()
+        .fg(Color::White)
+        .bg(Color::Red)
+        .add_modifier(Modifier::BOLD)
+}
+
 /// Color del lado de una orden: verde compra, rojo vende.
 pub fn side(side: tickforge_domain::trading::OrderSide) -> Style {
     match side {

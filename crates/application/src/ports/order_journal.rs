@@ -50,6 +50,10 @@ pub enum JournalEntry {
         outcome: ReconcileOutcome,
         at: DateTime<Utc>,
     },
+    /// Se activó el kill switch (bloqueo de órdenes nuevas y cancelación de las abiertas).
+    KillSwitchEngaged { reason: String, at: DateTime<Utc> },
+    /// Se desactivó el kill switch.
+    KillSwitchReleased { at: DateTime<Utc> },
 }
 
 impl JournalEntry {
@@ -63,7 +67,9 @@ impl JournalEntry {
             Self::Reconciled {
                 client_order_id, ..
             } => Some(client_order_id),
-            Self::CancelRequested { .. } => None,
+            Self::CancelRequested { .. }
+            | Self::KillSwitchEngaged { .. }
+            | Self::KillSwitchReleased { .. } => None,
         }
     }
 

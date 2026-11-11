@@ -74,10 +74,13 @@ Workspace de Cargo con un crate por capa. El compilador hace cumplir las depende
 - Pruebas contra servicios reales (por ejemplo `paper_smoke`): siempre `#[ignore]`, solo lectura,
   con salvaguarda de entorno paper. Se ejecutan a mano:
   `cargo test -p tickforge-adapter-alpaca --test paper_smoke -- --ignored --nocapture`.
-- Excepciones de escritura: `paper_orders_smoke` (adaptador de Alpaca) y `paper_reconcile_smoke`
-  (`apps/trader-tui/tests/`, con SQLite en disco) colocan una compra límite de 1 acción muy por
-  debajo del mercado y la cancelan, solo en paper. Cualquier prueba nueva que escriba en la
-  cuenta debe seguir esas mismas garantías (no ejecutable, cancelada, paper).
+- Excepciones de escritura: `paper_orders_smoke` (adaptador de Alpaca), `paper_reconcile_smoke` y
+  `paper_kill_switch_smoke` (`apps/trader-tui/tests/`, con SQLite en disco) colocan una compra
+  límite de 1 acción muy por debajo del mercado y la cancelan, solo en paper. Cualquier prueba
+  nueva que escriba en la cuenta debe seguir esas mismas garantías (no ejecutable, cancelada, paper).
+- **Nunca tocar órdenes del usuario**: una prueba que cancele en bloque (como el kill switch) debe
+  negarse a correr si la cuenta ya tiene órdenes abiertas. Las pruebas de escritura las ejecuta
+  el usuario o se ejecutan solo con su autorización explícita en la conversación.
 - Persistencia: pruebas del adaptador SQLite en memoria y con un archivo temporal real
   (verifica que los datos sobrevivan a cerrar y reabrir).
 

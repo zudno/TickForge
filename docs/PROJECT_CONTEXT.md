@@ -78,7 +78,7 @@ IEX Cloud cerró en 2024: no usar.
 | 4. TUI básica | Bucle de eventos, layout, watchlist en vivo, barra de estado | Pantalla funcional ✅ |
 | 5. Órdenes | Ticket, vista previa, modal de confirmación, riesgo pre-trade, cancelación | Comprar/vender en paper ✅ |
 | 6. Persistencia | Diario de órdenes, watchlists, reconciliación al iniciar | Auditoría y recuperación ✅ |
-| 7. Robustez | Reconexión con backoff, rate limits, idempotencia (`client_order_id`), apagado limpio, kill switch, panic hook | Listo para modo real |
+| 7. Robustez | Reconexión con backoff, rate limits, idempotencia (`client_order_id`), apagado limpio, kill switch, panic hook | Listo para modo real ✅ |
 | 8. Modo real | Bandera explícita + doble confirmación + banner LIVE | v1.0 |
 | 9. ML | Grabar datos → entrenar offline → exportar ONNX → modo sombra → asesor → (opcional) autónomo | Señales predictivas |
 
@@ -374,7 +374,9 @@ pub trait SignalGenerator: Send + Sync {
 - [x] Reintentos HTTP para errores pasajeros (red, 429, 5xx), respetando `Retry-After`; nunca para cancelaciones ni errores 4xx.
 - [x] Limitador de peticiones del lado del cliente (190/min por API).
 - [x] Detección de flujo congelado: 2 minutos sin datos con el mercado abierto fuerza la reconexión.
-- [ ] Kill switch: cancelar todas las órdenes abiertas y bloquear órdenes nuevas (segundo PR de la fase 7).
+- [x] Kill switch (`!`): bloquea toda orden nueva desde la política de riesgo y cancela las abiertas; persistido en SQLite.
+
+**Fase 7 completa.** Siguiente: fase 8, modo real (LIVE).
 
 ## 9. Decisiones de modelado del dominio
 
@@ -529,3 +531,16 @@ pub trait SignalGenerator: Send + Sync {
 | Reintentos HTTP | En `AlpacaHttp`: hasta 3 reintentos ante red, 429 o 5xx, con espera exponencial o la de `Retry-After` (tope 60 s). **Se reintentan** lecturas y el envío de órdenes (el `client_order_id` evita duplicados). **No se reintentan** cancelaciones (un segundo intento daría un error engañoso) ni errores 4xx. |
 | Límite de peticiones | Ventana deslizante de 60 s, 190 peticiones por API (trading y datos por separado), solo con aritmética entera. Configurable en `AlpacaConfig`. |
 | Pruebas | Tiempo simulado de `tokio` (`start_paused`) para el limitador y el bucle de reconexión; `wiremock` para reintentos y `Retry-After`. Verificado en vivo: una segunda instancia rechazada por el límite de conexiones reintenta con esperas crecientes y se conecta sola al liberarse la conexión. |
+
+## 16. Decisiones del kill switch
+
+| Concepto | Decisión |
+|---|---|
+| Dónde vive | En el **dominio** (`risk::KillSwitch`) y en `RiskPolicy`: `RiskContext` lleva el estado y, si está activo, toda orden recibe `RiskViolation::KillSwitchEngaged`. Así bloquea cualquier origen (usuario, reintentos, futuro motor de ML), no solo la TUI. |
+| Lectura | `PlaceOrderUseCase` lo lee del almacenamiento en **cada** evaluación (vista previa y envío). Si no se puede leer, la orden no sale. |
+| Persistencia | Puerto `KillSwitchRepository`; en SQLite una fila única (migración `0002_kill_switch.sql`). Sobrevive a reinicios y caídas: al iniciar, la TUI avisa si sigue activo. |
+| Orden de activación | 1) guardar el bloqueo (si falla, se informa y **no** se cancela nada: el usuario debe saber que no hay protección); 2) registrar en el diario; 3) cancelar en paralelo todas las órdenes cancelables. Las fallas parciales se reportan y `!` permite reintentar. |
+| Qué no hace | No cierra posiciones (lo dice la confirmación). Desactivarlo solo vuelve a permitir órdenes nuevas. |
+| Diario | Entradas `kill_switch_engaged` (con motivo) y `kill_switch_released`. |
+| TUI | `!` abre la confirmación (activar o desactivar según el estado); solo `Enter`/`Esc`. Activo: marco de la cuenta en rojo con aviso, insignia `⛔ DETENIDO` en la barra de estado y `b`/`s` explican el bloqueo en lugar de abrir el ticket. |
+| Prueba de humo | `paper_kill_switch_smoke` (escribe en paper) se **niega a correr si la cuenta tiene órdenes abiertas**: el kill switch las cancelaría todas, incluidas las del usuario. |

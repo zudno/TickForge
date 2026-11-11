@@ -8,12 +8,14 @@
 //! instalar nada. La base se crea sola en el primer arranque.
 
 mod error;
+mod kill_switch_repository;
 mod order_journal;
 mod rows;
 mod store;
 mod watchlist_repository;
 
 pub use error::StoreError;
+pub use kill_switch_repository::SqliteKillSwitchRepository;
 pub use order_journal::SqliteOrderJournal;
 pub use store::SqliteStore;
 pub use watchlist_repository::SqliteWatchlistRepository;
