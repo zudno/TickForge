@@ -21,6 +21,10 @@ use crate::wire::{BarsResponseWire, LatestQuoteResponseWire};
 /// Máximo de velas que la API devuelve en una sola página.
 const MAX_BARS_PER_PAGE: usize = 10_000;
 
+/// Tope de páginas por descarga de histórico: evita un bucle infinito si el proveedor
+/// devolviera siempre una ficha de página (10,000 velas por página).
+const MAX_BAR_PAGES: usize = 500;
+
 /// Mensajes que se toleran durante el saludo antes de considerarlo fallido.
 const MAX_HANDSHAKE_MESSAGES: usize = 20;
 
@@ -144,6 +148,59 @@ impl MarketDataFeed for AlpacaMarketData {
         // El puerto promete orden cronológico ascendente
         bars.reverse();
         Ok(bars)
+    }
+
+    async fn bars_between(
+        &self,
+        symbol: &Symbol,
+        timeframe: Timeframe,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<Bar>, MarketDataError> {
+        if start >= end {
+            return Ok(Vec::new());
+        }
+        let path = format!("/v2/stocks/{symbol}/bars");
+        let start_param = start.to_rfc3339_opts(SecondsFormat::Secs, true);
+        let end_param = end.to_rfc3339_opts(SecondsFormat::Secs, true);
+        let limit_param = MAX_BARS_PER_PAGE.to_string();
+
+        let mut bars = Vec::new();
+        let mut page_token: Option<String> = None;
+        for _ in 0..MAX_BAR_PAGES {
+            let mut query = vec![
+                ("timeframe", mapping::timeframe_param(timeframe)),
+                ("start", start_param.as_str()),
+                ("end", end_param.as_str()),
+                ("limit", limit_param.as_str()),
+                ("sort", "asc"),
+                ("adjustment", "raw"),
+                ("feed", self.feed.as_str()),
+            ];
+            if let Some(token) = &page_token {
+                query.push(("page_token", token.as_str()));
+            }
+            let wire: BarsResponseWire = self
+                .http
+                .get(&path, &query)
+                .await
+                .map_err(|error| market_data_error(error, symbol))?;
+
+            for bar in wire.bars.unwrap_or_default() {
+                let bar = mapping::bar(symbol, timeframe, bar).map_err(invalid_response)?;
+                // El proveedor trata `end` como inclusivo; el puerto promete `[start, end)`
+                if bar.starts_at() < end {
+                    bars.push(bar);
+                }
+            }
+            match wire.next_page_token.filter(|token| !token.is_empty()) {
+                Some(token) => page_token = Some(token),
+                None => return Ok(bars),
+            }
+        }
+        Err(MarketDataError::InvalidResponse(format!(
+            "{symbol}: el histórico de velas superó {MAX_BAR_PAGES} páginas"
+        )))
     }
 
     /// Flujo en tiempo real. El plan gratuito de Alpaca admite **una sola conexión** de datos:

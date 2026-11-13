@@ -5,11 +5,12 @@ use std::sync::Arc;
 use anyhow::Context;
 use tickforge_adapter_alpaca::{AlpacaBrokerGateway, AlpacaConfig, AlpacaMarketData};
 use tickforge_adapter_sqlite::{
-    SqliteKillSwitchRepository, SqliteOrderJournal, SqliteStore, SqliteWatchlistRepository,
+    SqliteBarRepository, SqliteKillSwitchRepository, SqliteOrderJournal, SqliteStore,
+    SqliteWatchlistRepository,
 };
 use tickforge_application::ports::{BrokerGateway, Clock, MarketDataFeed};
 use tickforge_application::use_cases::market::{
-    GetMarketClockUseCase, ManageWatchlistUseCase, WatchMarketUseCase,
+    GetMarketClockUseCase, ManageWatchlistUseCase, RecordMarketDataUseCase, WatchMarketUseCase,
 };
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
@@ -31,6 +32,8 @@ pub struct Application {
     pub config: TuiConfig,
     /// Se cierra al salir para dejar la base de datos consistente en disco.
     pub store: SqliteStore,
+    /// Histórico de velas (`market.db`); también se cierra al salir.
+    pub market_store: SqliteStore,
 }
 
 /// `alpaca` ya viene construida para el modo de `settings`: la de la cuenta real solo existe
@@ -56,6 +59,13 @@ pub async fn build(settings: &Settings, mut alpaca: AlpacaConfig) -> anyhow::Res
             )
         })?;
     tracing::info!(path = %settings.database_path.display(), "base de datos abierta");
+
+    let market_store = open_market_store(settings).await?;
+    let record_market_data = Arc::new(RecordMarketDataUseCase::new(
+        Arc::clone(&market_data),
+        Arc::new(SqliteBarRepository::new(market_store.clone())),
+        Arc::clone(&clock),
+    ));
 
     // La watchlist guardada manda; `TICKFORGE_WATCHLIST` solo se usa en el primer arranque
     let watchlist = Arc::new(ManageWatchlistUseCase::new(
@@ -103,6 +113,7 @@ pub async fn build(settings: &Settings, mut alpaca: AlpacaConfig) -> anyhow::Res
         kill_switch,
         // Misma regla de pérdida diaria que la política de riesgo
         daily_loss_guard: Arc::new(DailyLossGuard::new(trading_ports, settings.risk_limits)),
+        record_market_data,
         clock,
     };
     let config = TuiConfig {
@@ -114,5 +125,19 @@ pub async fn build(settings: &Settings, mut alpaca: AlpacaConfig) -> anyhow::Res
         services,
         config,
         store,
+        market_store,
     })
+}
+
+/// Abre (o crea) la base del histórico de velas.
+pub async fn open_market_store(settings: &Settings) -> anyhow::Result<SqliteStore> {
+    let path = &settings.market_database_path;
+    let store = SqliteStore::open_market_data(path).await.with_context(|| {
+        format!(
+            "no se pudo abrir el histórico de mercado '{}'",
+            path.display()
+        )
+    })?;
+    tracing::info!(path = %path.display(), "histórico de mercado abierto");
+    Ok(store)
 }

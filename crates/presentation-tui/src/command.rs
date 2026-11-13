@@ -5,9 +5,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use tickforge_application::ApplicationError;
 use tickforge_application::ports::Clock;
+use tickforge_application::ports::MarketEvent;
 use tickforge_application::resilience::ExponentialBackoff;
 use tickforge_application::use_cases::market::{
-    GetMarketClockUseCase, ManageWatchlistUseCase, WatchMarketUseCase,
+    GetMarketClockUseCase, ManageWatchlistUseCase, RecordMarketDataUseCase, WatchMarketUseCase,
 };
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
@@ -64,6 +65,8 @@ pub struct TuiServices {
     pub reconcile_orders: Arc<ReconcileOrdersUseCase>,
     pub kill_switch: Arc<KillSwitchUseCase>,
     pub daily_loss_guard: Arc<DailyLossGuard>,
+    /// Guarda las velas del flujo en vivo en el histórico (materia prima para ML).
+    pub record_market_data: Arc<RecordMarketDataUseCase>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -261,8 +264,10 @@ impl CommandExecutor {
             Command::StartMarketStream(symbols) => {
                 abort(&mut self.market_stream);
                 let use_case = Arc::clone(&services.watch_market);
+                let recorder = Arc::clone(&services.record_market_data);
                 self.market_stream = Some(tokio::spawn(run_market_stream(
                     use_case,
+                    recorder,
                     symbols,
                     self.actions.clone(),
                 )));
@@ -336,13 +341,14 @@ enum StreamEnd {
 /// Cada reconexión vuelve a cargar la foto inicial, así no quedan huecos de datos.
 async fn run_market_stream(
     use_case: Arc<WatchMarketUseCase>,
+    recorder: Arc<RecordMarketDataUseCase>,
     symbols: Vec<Symbol>,
     actions: UnboundedSender<Action>,
 ) {
     let backoff = ExponentialBackoff::streaming();
     let mut attempt: u32 = 0;
     loop {
-        match market_connection(&use_case, &symbols, &actions).await {
+        match market_connection(&use_case, &recorder, &symbols, &actions).await {
             StreamEnd::Shutdown => return,
             StreamEnd::Lost { reason, healthy } => {
                 if healthy {
@@ -367,6 +373,7 @@ async fn run_market_stream(
 
 async fn market_connection(
     use_case: &WatchMarketUseCase,
+    recorder: &Arc<RecordMarketDataUseCase>,
     symbols: &[Symbol],
     actions: &UnboundedSender<Action>,
 ) -> StreamEnd {
@@ -392,6 +399,9 @@ async fn market_connection(
     let mut received = false;
     while let Some(event) = events.next().await {
         received = true;
+        if let MarketEvent::Bar(bar) = &event {
+            record_bar(recorder, bar.clone());
+        }
         if actions.send(Action::Market(event)).is_err() {
             return StreamEnd::Shutdown;
         }
@@ -400,6 +410,17 @@ async fn market_connection(
         reason: "el servidor cerró la conexión".to_owned(),
         healthy: received || connected_at.elapsed() >= HEALTHY_CONNECTION,
     }
+}
+
+/// Guarda la vela en el histórico en segundo plano: escribir en disco nunca retrasa la
+/// pantalla. Un fallo solo se registra en el log (el histórico es para ML, no para operar).
+fn record_bar(recorder: &Arc<RecordMarketDataUseCase>, bar: tickforge_domain::market::Bar) {
+    let recorder = Arc::clone(recorder);
+    tokio::spawn(async move {
+        if let Err(error) = recorder.record(&bar).await {
+            tracing::warn!(%error, symbol = %bar.symbol(), "no se pudo guardar la vela");
+        }
+    });
 }
 
 /// Flujo de actualizaciones de órdenes con reconexión automática.

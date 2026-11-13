@@ -11,7 +11,7 @@ use serde_json::json;
 use tickforge_application::ports::{MarketDataError, MarketDataFeed};
 use tickforge_domain::market::Timeframe;
 use tickforge_domain::shared::{Quantity, Symbol};
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn aapl() -> Symbol {
@@ -134,4 +134,66 @@ async fn http_errors_are_mapped_to_market_data_errors() {
             "HTTP {status}"
         );
     }
+}
+
+#[tokio::test]
+async fn bars_between_follows_every_page_and_excludes_the_end() {
+    let server = MockServer::start().await;
+    let bar = |t: &str| json!({ "t": t, "o": 180, "h": 181, "l": 179, "c": 180.5, "v": 100 });
+    Mock::given(method("GET"))
+        .and(path("/v2/stocks/AAPL/bars"))
+        .and(query_param("timeframe", "1Min"))
+        .and(query_param("start", "2024-03-01T14:30:00Z"))
+        .and(query_param("end", "2024-03-01T14:33:00Z"))
+        .and(query_param("sort", "asc"))
+        .and(query_param_is_missing("page_token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "symbol": "AAPL",
+            "bars": [bar("2024-03-01T14:30:00Z"), bar("2024-03-01T14:31:00Z")],
+            "next_page_token": "QUFQTHxNfDIwMjQ"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v2/stocks/AAPL/bars"))
+        .and(query_param("page_token", "QUFQTHxNfDIwMjQ"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "symbol": "AAPL",
+            // Alpaca incluye la vela que empieza justo en `end`; el puerto la excluye
+            "bars": [bar("2024-03-01T14:32:00Z"), bar("2024-03-01T14:33:00Z")],
+            "next_page_token": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let start = chrono::DateTime::parse_from_rfc3339("2024-03-01T14:30:00Z")
+        .unwrap()
+        .to_utc();
+    let end = chrono::DateTime::parse_from_rfc3339("2024-03-01T14:33:00Z")
+        .unwrap()
+        .to_utc();
+    let bars = market_data(&server)
+        .bars_between(&aapl(), Timeframe::Minute1, start, end)
+        .await
+        .unwrap();
+
+    let starts: Vec<String> = bars
+        .iter()
+        .map(|bar| bar.starts_at().format("%H:%M").to_string())
+        .collect();
+    assert_eq!(starts, ["14:30", "14:31", "14:32"]);
+}
+
+#[tokio::test]
+async fn an_empty_range_makes_no_request() {
+    let server = MockServer::start().await;
+    let instant = chrono::DateTime::UNIX_EPOCH;
+    let bars = market_data(&server)
+        .bars_between(&aapl(), Timeframe::Minute1, instant, instant)
+        .await
+        .unwrap();
+    assert!(bars.is_empty());
+    assert!(server.received_requests().await.unwrap().is_empty());
 }

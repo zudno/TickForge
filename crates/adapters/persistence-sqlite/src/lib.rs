@@ -2,11 +2,13 @@
 //!
 //! - `SqliteOrderJournal` implementa `OrderJournal` (diario de auditoría, solo se agrega).
 //! - `SqliteWatchlistRepository` implementa `WatchlistRepository`.
+//! - `SqliteBarRepository` implementa `BarRepository` sobre una base aparte (`market.db`).
 //!
 //! SQLite va incluido en el binario (`rusqlite` con `bundled`) y las migraciones se embeben al
 //! compilar (versionadas con `PRAGMA user_version`): no hay que
 //! instalar nada. La base se crea sola en el primer arranque.
 
+mod bar_repository;
 mod error;
 mod kill_switch_repository;
 mod order_journal;
@@ -14,6 +16,7 @@ mod rows;
 mod store;
 mod watchlist_repository;
 
+pub use bar_repository::SqliteBarRepository;
 pub use error::StoreError;
 pub use kill_switch_repository::SqliteKillSwitchRepository;
 pub use order_journal::SqliteOrderJournal;

@@ -120,4 +120,5 @@ también (si una licencia nueva es necesaria, agregarla a `deny.toml` con justif
 - Windows 11, toolchain fijado en `rust-toolchain.toml` (1.94.0, edición 2024, resolver 3).
 - MSRV (`rust-version` del workspace): 1.89 (lo exige `rusqlite` 0.41). Con `resolver = "3"` Cargo elige versiones compatibles
   con el MSRV declarado; si una corrección de seguridad exige un Rust más nuevo, hay que subirlo.
-- La carpeta `ml/` (Python) queda fuera del workspace de Rust.
+- La carpeta `ml/` (Python) queda fuera del workspace de Rust. Lee el histórico de velas de
+  `data/market.db` (base aparte de la de trading; ver `ml/README.md`).
