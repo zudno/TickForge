@@ -115,6 +115,11 @@ impl PaperBroker {
         lock(&self.state).market_open = open;
     }
 
+    /// Equity del cierre anterior: permite simular una ganancia o pérdida del día.
+    pub fn set_last_equity(&self, last_equity: Money) {
+        lock(&self.state).last_equity = last_equity;
+    }
+
     /// Hace que el próximo `submit_order` falle con `error` (por ejemplo, para simular una caída).
     pub fn fail_next_submit(&self, error: BrokerError) {
         lock(&self.state).pending_submit_failure = Some(error);

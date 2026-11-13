@@ -230,3 +230,36 @@ async fn kill_switch_is_released_until_engaged_and_survives_reopening() {
         let _ = std::fs::remove_dir_all(directory);
     }
 }
+
+#[tokio::test]
+async fn intents_are_counted_from_a_point_in_time_and_survive_reopening() {
+    let path = temp_database();
+    let store = SqliteStore::open(&path).await.unwrap();
+    let journal = SqliteOrderJournal::new(store.clone());
+
+    for (id, seconds) in [("tf-1", 1_000), ("tf-2", 1_059), ("tf-3", 1_060)] {
+        journal
+            .append(JournalEntry::Intent {
+                request: request(id),
+                at: at(seconds),
+            })
+            .await
+            .unwrap();
+    }
+    // Las demás entradas no cuentan como órdenes enviadas
+    journal.append(submitted("tf-1")).await.unwrap();
+
+    assert_eq!(journal.count_intents_since(at(0)).await.unwrap(), 3);
+    assert_eq!(journal.count_intents_since(at(1_059)).await.unwrap(), 2);
+    assert_eq!(journal.count_intents_since(at(1_061)).await.unwrap(), 0);
+
+    // El conteo sale del disco: reiniciar la aplicación no reinicia el tope
+    store.close().await;
+    let reopened = SqliteStore::open(&path).await.unwrap();
+    let journal = SqliteOrderJournal::new(reopened.clone());
+    assert_eq!(journal.count_intents_since(at(1_000)).await.unwrap(), 3);
+    reopened.close().await;
+    if let Some(directory) = path.parent() {
+        let _ = std::fs::remove_dir_all(directory);
+    }
+}

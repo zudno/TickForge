@@ -1,7 +1,7 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use tickforge_domain::market::Quote;
 use tickforge_domain::portfolio::{Account, Position};
-use tickforge_domain::risk::{KillSwitch, RiskAssessment, RiskContext, RiskPolicy};
+use tickforge_domain::risk::{KillSwitch, OrderActivity, RiskAssessment, RiskContext, RiskPolicy};
 use tickforge_domain::shared::{Money, Price, Quantity, Symbol};
 use tickforge_domain::trading::{Order, OrderRequest, OrderSide, OrderType, TimeInForce};
 
@@ -45,6 +45,8 @@ struct RiskInputs {
     kill_switch: KillSwitch,
     /// Solo se consulta si la política lo necesita (ver `market_open_if_required`).
     market_open: Option<bool>,
+    /// Solo se cuenta si los límites tienen tope de órdenes (ver `order_activity`).
+    order_activity: OrderActivity,
     now: DateTime<Utc>,
 }
 
@@ -186,7 +188,8 @@ impl PlaceOrderUseCase {
     /// Cuenta, posición, cotización, kill switch y (si hace falta) horario, en paralelo.
     async fn gather_inputs(&self, request: &OrderRequest) -> Result<RiskInputs, ApplicationError> {
         let ports = &self.ports;
-        let (account, position, quote, kill_switch, market_open) = futures::try_join!(
+        let now = ports.clock.now();
+        let (account, position, quote, kill_switch, market_open, order_activity) = futures::try_join!(
             async { ports.broker.account().await.map_err(ApplicationError::from) },
             async {
                 ports
@@ -211,6 +214,7 @@ impl PlaceOrderUseCase {
                     .map_err(ApplicationError::from)
             },
             async { Ok(self.market_open_if_required(request).await) },
+            self.order_activity(now),
         )?;
         Ok(RiskInputs {
             account,
@@ -218,7 +222,26 @@ impl PlaceOrderUseCase {
             quote,
             kill_switch,
             market_open,
-            now: ports.clock.now(),
+            order_activity,
+            now,
+        })
+    }
+
+    /// Órdenes enviadas en los últimos 60 s y 24 h, contadas en el diario. Si el diario no
+    /// responde, la orden no sale (el tope no se puede verificar).
+    async fn order_activity(&self, now: DateTime<Utc>) -> Result<OrderActivity, ApplicationError> {
+        if !self.risk_policy.limits().limits_order_rate() {
+            return Ok(OrderActivity::default());
+        }
+        let since = |window: TimeDelta| now.checked_sub_signed(window).unwrap_or(now);
+        let journal = &self.ports.journal;
+        let (last_minute, last_day) = futures::try_join!(
+            journal.count_intents_since(since(TimeDelta::minutes(1))),
+            journal.count_intents_since(since(TimeDelta::days(1))),
+        )?;
+        Ok(OrderActivity {
+            last_minute,
+            last_day,
         })
     }
 
@@ -255,6 +278,7 @@ impl PlaceOrderUseCase {
             now: inputs.now,
             kill_switch: &inputs.kill_switch,
             market_open: inputs.market_open,
+            order_activity: inputs.order_activity,
         })?)
     }
 }

@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use crate::error::DomainError;
 use crate::market::Quote;
 use crate::portfolio::{Account, Position};
-use crate::risk::{KillSwitch, RiskLimits, RiskViolation};
+use crate::risk::{KillSwitch, OrderActivity, RiskLimits, RiskViolation};
 use crate::shared::{Money, Quantity};
 use crate::trading::{OrderRequest, OrderSide};
 
@@ -22,6 +22,8 @@ pub struct RiskContext<'a> {
     /// saber; solo importa cuando los límites restringen las órdenes a mercado, y en ese caso
     /// "no se sabe" cuenta como cerrado.
     pub market_open: Option<bool>,
+    /// Órdenes enviadas recientemente; solo importa si los límites tienen tope de órdenes.
+    pub order_activity: OrderActivity,
 }
 
 /// Resultado de la evaluación: aprobada si no hay violaciones.
@@ -73,6 +75,7 @@ impl RiskPolicy {
             now,
             kill_switch,
             market_open,
+            order_activity,
         } = *context;
 
         ensure_same_symbol(request, quote.symbol())?;
@@ -89,6 +92,27 @@ impl RiskPolicy {
         }
         if account.is_trading_blocked() {
             violations.push(RiskViolation::TradingBlocked);
+        }
+        if let Some(loss) = self.limits.daily_loss_breach(account)?
+            && let Some(limit) = self.limits.max_daily_loss()
+        {
+            violations.push(RiskViolation::DailyLossLimitReached { loss, limit });
+        }
+        if let Some(limit) = self.limits.max_orders_per_minute()
+            && order_activity.last_minute >= limit
+        {
+            violations.push(RiskViolation::TooManyOrdersPerMinute {
+                count: order_activity.last_minute,
+                limit,
+            });
+        }
+        if let Some(limit) = self.limits.max_orders_per_day()
+            && order_activity.last_day >= limit
+        {
+            violations.push(RiskViolation::TooManyOrdersPerDay {
+                count: order_activity.last_day,
+                limit,
+            });
         }
         if self.limits.market_orders_require_open_market()
             && request.order_type().limit_price().is_none()
@@ -270,6 +294,7 @@ mod tests {
                 now: at(NOW),
                 kill_switch: &KillSwitch::Released,
                 market_open: None,
+                order_activity: OrderActivity::default(),
             })
             .unwrap()
     }
@@ -299,6 +324,7 @@ mod tests {
                 now: at(NOW),
                 kill_switch: &kill_switch,
                 market_open: None,
+                order_activity: OrderActivity::default(),
             })
             .unwrap();
 
@@ -450,6 +476,7 @@ mod tests {
             now: at(NOW),
             kill_switch: &KillSwitch::Released,
             market_open: None,
+            order_activity: OrderActivity::default(),
         });
 
         assert!(matches!(result, Err(DomainError::SymbolMismatch { .. })));
@@ -466,6 +493,7 @@ mod tests {
                 now: at(NOW),
                 kill_switch: &KillSwitch::Released,
                 market_open,
+                order_activity: OrderActivity::default(),
             })
             .unwrap()
     }
@@ -502,6 +530,89 @@ mod tests {
                 &quote("AAPL", dec!(189.10), dec!(189.12), NOW),
             )
             .is_approved()
+        );
+    }
+
+    fn evaluate_with_activity(
+        limits: RiskLimits,
+        account: &Account,
+        order_activity: OrderActivity,
+    ) -> RiskAssessment {
+        let request = order(OrderSide::Buy, OrderType::Market, dec!(1));
+        RiskPolicy::new(limits)
+            .evaluate(&RiskContext {
+                request: &request,
+                account,
+                position: None,
+                quote: &quote("AAPL", dec!(189.10), dec!(189.12), NOW),
+                now: at(NOW),
+                kill_switch: &KillSwitch::Released,
+                market_open: None,
+                order_activity,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn reaching_the_daily_loss_limit_blocks_new_orders() {
+        let limits = policy()
+            .limits()
+            .with_max_daily_loss(Money::usd(dec!(500)))
+            .unwrap();
+        let losing = Account::new(
+            AccountBalances {
+                equity: Money::usd(dec!(49400)),
+                cash: Money::usd(dec!(49400)),
+                buying_power: Money::usd(dec!(49400)),
+                last_equity: Money::usd(dec!(50000)),
+            },
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            evaluate_with_activity(limits, &losing, OrderActivity::default()).violations(),
+            [RiskViolation::DailyLossLimitReached {
+                loss: Money::usd(dec!(600)),
+                limit: Money::usd(dec!(500)),
+            }]
+        );
+        // Una cuenta sin pérdidas pasa con los mismos límites
+        assert!(
+            evaluate_with_activity(
+                limits,
+                &account(dec!(50000), false),
+                OrderActivity::default()
+            )
+            .is_approved()
+        );
+    }
+
+    #[test]
+    fn order_caps_block_bursts_per_minute_and_per_day() {
+        let limits = policy().limits().with_order_rate_limits(5, 30).unwrap();
+        let account = account(dec!(50000), false);
+        let activity = |last_minute, last_day| OrderActivity {
+            last_minute,
+            last_day,
+        };
+
+        assert!(evaluate_with_activity(limits, &account, activity(4, 29)).is_approved());
+        assert_eq!(
+            evaluate_with_activity(limits, &account, activity(5, 5)).violations(),
+            [RiskViolation::TooManyOrdersPerMinute { count: 5, limit: 5 }]
+        );
+        assert_eq!(
+            evaluate_with_activity(limits, &account, activity(0, 30)).violations(),
+            [RiskViolation::TooManyOrdersPerDay {
+                count: 30,
+                limit: 30
+            }]
+        );
+        // Sin topes configurados, la actividad no importa
+        assert!(
+            evaluate_with_activity(*policy().limits(), &account, activity(1000, 1000))
+                .is_approved()
         );
     }
 }

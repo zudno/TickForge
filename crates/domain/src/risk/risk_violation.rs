@@ -37,6 +37,20 @@ pub enum RiskViolation {
     InsufficientPosition { requested: Quantity, held: Quantity },
 
     #[error(
+        "la pérdida del día ({loss}) alcanzó el máximo permitido ({limit}): no se aceptan \
+         órdenes nuevas"
+    )]
+    DailyLossLimitReached { loss: Money, limit: Money },
+
+    #[error(
+        "ya se enviaron {count} órdenes en el último minuto (máximo {limit}); espera un momento"
+    )]
+    TooManyOrdersPerMinute { count: u32, limit: u32 },
+
+    #[error("ya se enviaron {count} órdenes en las últimas 24 horas (máximo {limit})")]
+    TooManyOrdersPerDay { count: u32, limit: u32 },
+
+    #[error(
         "las órdenes a mercado solo se aceptan con el mercado abierto (horario regular); \
          usa una orden límite"
     )]

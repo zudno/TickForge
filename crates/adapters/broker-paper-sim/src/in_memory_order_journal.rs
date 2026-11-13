@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use tickforge_application::ports::{JournalEntry, JournalError, OrderJournal};
 use tickforge_domain::trading::{ClientOrderId, OrderRequest};
 
@@ -60,6 +61,14 @@ impl OrderJournal for InMemoryOrderJournal {
                 _ => None,
             })
             .collect())
+    }
+
+    async fn count_intents_since(&self, since: DateTime<Utc>) -> Result<u32, JournalError> {
+        let count = lock(&self.entries)
+            .iter()
+            .filter(|entry| matches!(entry, JournalEntry::Intent { at, .. } if *at >= since))
+            .count();
+        u32::try_from(count).map_err(|_| JournalError::Corrupted("demasiadas entradas".to_owned()))
     }
 }
 

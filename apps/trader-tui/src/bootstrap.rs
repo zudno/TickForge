@@ -13,8 +13,8 @@ use tickforge_application::use_cases::market::{
 };
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
-    CancelOrderUseCase, KillSwitchUseCase, PlaceOrderUseCase, ReconcileOrdersUseCase, TradingPorts,
-    WatchOrderUpdatesUseCase,
+    CancelOrderUseCase, DailyLossGuard, KillSwitchUseCase, PlaceOrderUseCase,
+    ReconcileOrdersUseCase, TradingPorts, WatchOrderUpdatesUseCase,
 };
 use tickforge_domain::risk::RiskPolicy;
 use tickforge_presentation_tui::{TradingMode, TuiConfig, TuiServices};
@@ -99,8 +99,10 @@ pub async fn build(settings: &Settings, mut alpaca: AlpacaConfig) -> anyhow::Res
         )),
         cancel_order: Arc::new(CancelOrderUseCase::new(trading_ports.clone())),
         order_updates: Arc::new(WatchOrderUpdatesUseCase::new(broker)),
-        reconcile_orders: Arc::new(ReconcileOrdersUseCase::new(trading_ports)),
+        reconcile_orders: Arc::new(ReconcileOrdersUseCase::new(trading_ports.clone())),
         kill_switch,
+        // Misma regla de pérdida diaria que la política de riesgo
+        daily_loss_guard: Arc::new(DailyLossGuard::new(trading_ports, settings.risk_limits)),
         clock,
     };
     let config = TuiConfig {
