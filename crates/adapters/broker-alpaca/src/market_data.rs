@@ -43,6 +43,7 @@ enum Expected {
 impl AlpacaMarketData {
     /// El reloj se usa para calcular la ventana de tiempo al pedir velas históricas.
     pub fn new(config: &AlpacaConfig, clock: Arc<dyn Clock>) -> Result<Self, AlpacaSetupError> {
+        config.validate()?;
         Ok(Self {
             http: AlpacaHttp::new(
                 &config.data_base_url,

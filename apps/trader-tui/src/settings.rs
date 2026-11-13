@@ -1,6 +1,6 @@
 //! Configuración desde variables de entorno (y el archivo `.env`, si existe).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{Context, bail};
@@ -14,38 +14,59 @@ use tickforge_presentation_tui::TradingMode;
 /// Watchlist por defecto si no se define `TICKFORGE_WATCHLIST`.
 const DEFAULT_WATCHLIST: &str = "AAPL,MSFT,NVDA,AMZN,SPY,QQQ";
 
-/// Límites de riesgo por defecto: conservadores a propósito. Se ajustan en `.env`.
-const DEFAULT_MAX_ORDER_NOTIONAL: &str = "5000";
-const DEFAULT_MAX_POSITION_NOTIONAL: &str = "20000";
-const DEFAULT_MAX_PRICE_DEVIATION_PCT: &str = "5";
-const DEFAULT_MAX_QUOTE_AGE_SECS: &str = "15";
+/// Valores por defecto de los límites de riesgo de un modo, y el prefijo de las variables
+/// de entorno que los ajustan (`TICKFORGE_MAX_...` o `TICKFORGE_LIVE_MAX_...`).
+struct LimitDefaults {
+    prefix: &'static str,
+    max_order_notional: &'static str,
+    max_position_notional: &'static str,
+    max_price_deviation_pct: &'static str,
+    max_quote_age_secs: &'static str,
+}
+
+/// Paper: conservadores, pero con margen para practicar.
+const PAPER_LIMITS: LimitDefaults = LimitDefaults {
+    prefix: "TICKFORGE_",
+    max_order_notional: "5000",
+    max_position_notional: "20000",
+    max_price_deviation_pct: "5",
+    max_quote_age_secs: "15",
+};
+
+/// Real: mucho más estrictos. Son independientes de los de paper: subir un límite de paper
+/// nunca afecta al dinero real.
+const LIVE_LIMITS: LimitDefaults = LimitDefaults {
+    prefix: "TICKFORGE_LIVE_",
+    max_order_notional: "250",
+    max_position_notional: "1000",
+    max_price_deviation_pct: "3",
+    max_quote_age_secs: "10",
+};
+
+/// Nombre del archivo de la base de datos dentro de `TICKFORGE_DATA_DIR`.
+const DATABASE_FILE: &str = "tickforge.db";
+/// Subcarpeta de la base del modo real: diario, watchlist y kill switch propios.
+const LIVE_DATA_SUBDIR: &str = "live";
 
 pub struct Settings {
     pub mode: TradingMode,
     pub watchlist: Vec<Symbol>,
     pub data_feed: DataFeed,
     pub log_dir: PathBuf,
-    /// Archivo SQLite con el diario de órdenes y la watchlist.
+    /// Archivo SQLite con el diario de órdenes, la watchlist y el kill switch. Cada modo
+    /// tiene el suyo.
     pub database_path: PathBuf,
     pub risk_limits: RiskLimits,
-    pub alpaca_key_id: String,
-    pub alpaca_secret_key: String,
 }
 
 impl Settings {
-    pub fn load() -> anyhow::Result<Self> {
+    /// `live_flag` indica si se pasó `--live` en la línea de comandos.
+    pub fn load(live_flag: bool) -> anyhow::Result<Self> {
         // Busca `.env` en el directorio actual y sus padres; si no existe, se usan las
         // variables de entorno del sistema
         dotenvy::dotenv().ok();
 
-        let mode = match optional("TICKFORGE_MODE").as_deref() {
-            None | Some("paper") => TradingMode::Paper,
-            Some("live") => bail!(
-                "El modo real (TICKFORGE_MODE=live) no está habilitado en esta versión. \
-                 Usa TICKFORGE_MODE=paper."
-            ),
-            Some(other) => bail!("TICKFORGE_MODE='{other}' no es válido; usa 'paper'"),
-        };
+        let mode = resolve_mode(optional("TICKFORGE_MODE").as_deref(), live_flag)?;
 
         let data_feed = match optional("ALPACA_DATA_FEED").as_deref() {
             None | Some("iex") => DataFeed::Iex,
@@ -59,46 +80,85 @@ impl Settings {
                 .unwrap_or(DEFAULT_WATCHLIST),
         )?;
 
+        let data_dir =
+            optional("TICKFORGE_DATA_DIR").map_or_else(|| PathBuf::from("data"), PathBuf::from);
+        let defaults = match mode {
+            TradingMode::Paper => &PAPER_LIMITS,
+            TradingMode::Live => &LIVE_LIMITS,
+        };
+
         Ok(Self {
             mode,
             watchlist,
             data_feed,
-            database_path: optional("TICKFORGE_DATA_DIR")
-                .map_or_else(|| PathBuf::from("data"), PathBuf::from)
-                .join("tickforge.db"),
+            database_path: database_path(&data_dir, mode),
             log_dir: optional("TICKFORGE_LOG_DIR")
                 .map_or_else(|| PathBuf::from("logs"), PathBuf::from),
-            risk_limits: risk_limits()?,
-            alpaca_key_id: required("ALPACA_API_KEY_ID")?,
-            alpaca_secret_key: required("ALPACA_API_SECRET_KEY")?,
+            risk_limits: risk_limits(defaults)?,
         })
     }
 }
 
-/// Límites de la política de riesgo, validados por el dominio.
-fn risk_limits() -> anyhow::Result<RiskLimits> {
-    let max_quote_age_secs: i64 =
-        setting_or("TICKFORGE_MAX_QUOTE_AGE_SECS", DEFAULT_MAX_QUOTE_AGE_SECS)
-            .parse()
-            .context("TICKFORGE_MAX_QUOTE_AGE_SECS debe ser un número entero de segundos")?;
+/// Las dos primeras llaves del modo real: `TICKFORGE_MODE=live` **y** `--live`. Si solo
+/// está una de las dos, no se arranca en ningún modo: la discrepancia indica un error.
+fn resolve_mode(env_mode: Option<&str>, live_flag: bool) -> anyhow::Result<TradingMode> {
+    match (env_mode, live_flag) {
+        (None | Some("paper"), false) => Ok(TradingMode::Paper),
+        (Some("live"), true) => Ok(TradingMode::Live),
+        (Some("live"), false) => bail!(
+            "TICKFORGE_MODE=live, pero falta el parámetro --live. Para operar con dinero \
+             real ejecuta `tickforge --live`; para paper, usa TICKFORGE_MODE=paper"
+        ),
+        (None | Some("paper"), true) => bail!(
+            "se pasó --live, pero TICKFORGE_MODE no es 'live'. El modo real exige ambas \
+             cosas: TICKFORGE_MODE=live en .env y el parámetro --live"
+        ),
+        (Some(other), _) => {
+            bail!("TICKFORGE_MODE='{other}' no es válido; usa 'paper' o 'live'")
+        }
+    }
+}
+
+/// Paper conserva la ruta histórica (`data/tickforge.db`); el modo real usa su propia
+/// subcarpeta para que nada se cruce entre cuentas.
+fn database_path(data_dir: &Path, mode: TradingMode) -> PathBuf {
+    match mode {
+        TradingMode::Paper => data_dir.join(DATABASE_FILE),
+        TradingMode::Live => data_dir.join(LIVE_DATA_SUBDIR).join(DATABASE_FILE),
+    }
+}
+
+/// Límites de la política de riesgo del modo, validados por el dominio.
+fn risk_limits(defaults: &LimitDefaults) -> anyhow::Result<RiskLimits> {
+    let name = |suffix: &str| format!("{}{suffix}", defaults.prefix);
+
+    let quote_age_name = name("MAX_QUOTE_AGE_SECS");
+    let max_quote_age_secs: i64 = setting_or(&quote_age_name, defaults.max_quote_age_secs)
+        .parse()
+        .with_context(|| format!("{quote_age_name} debe ser un número entero de segundos"))?;
 
     RiskLimits::new(
         Money::usd(decimal_setting(
-            "TICKFORGE_MAX_ORDER_NOTIONAL",
-            DEFAULT_MAX_ORDER_NOTIONAL,
+            &name("MAX_ORDER_NOTIONAL"),
+            defaults.max_order_notional,
         )?),
         Money::usd(decimal_setting(
-            "TICKFORGE_MAX_POSITION_NOTIONAL",
-            DEFAULT_MAX_POSITION_NOTIONAL,
+            &name("MAX_POSITION_NOTIONAL"),
+            defaults.max_position_notional,
         )?),
         decimal_setting(
-            "TICKFORGE_MAX_PRICE_DEVIATION_PCT",
-            DEFAULT_MAX_PRICE_DEVIATION_PCT,
+            &name("MAX_PRICE_DEVIATION_PCT"),
+            defaults.max_price_deviation_pct,
         )?,
         TimeDelta::try_seconds(max_quote_age_secs)
-            .context("TICKFORGE_MAX_QUOTE_AGE_SECS está fuera de rango")?,
+            .with_context(|| format!("{quote_age_name} está fuera de rango"))?,
     )
-    .context("los límites de riesgo de .env no son válidos")
+    .with_context(|| {
+        format!(
+            "los límites de riesgo ({}MAX_*) no son válidos",
+            defaults.prefix
+        )
+    })
 }
 
 fn setting_or(name: &str, default: &str) -> String {
@@ -117,7 +177,7 @@ fn optional(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn required(name: &str) -> anyhow::Result<String> {
+pub fn required(name: &str) -> anyhow::Result<String> {
     optional(name).with_context(|| {
         format!("falta la variable {name}: cópiala en el archivo .env (ver .env.example)")
     })
@@ -153,6 +213,52 @@ mod tests {
         let symbols = parse_watchlist(" aapl, MSFT ,,AAPL,brk.b ").unwrap();
         let names: Vec<&str> = symbols.iter().map(Symbol::as_str).collect();
         assert_eq!(names, ["AAPL", "MSFT", "BRK.B"]);
+    }
+
+    #[test]
+    fn live_mode_needs_both_the_environment_and_the_flag() {
+        assert_eq!(resolve_mode(None, false).unwrap(), TradingMode::Paper);
+        assert_eq!(
+            resolve_mode(Some("paper"), false).unwrap(),
+            TradingMode::Paper
+        );
+        assert_eq!(resolve_mode(Some("live"), true).unwrap(), TradingMode::Live);
+
+        // Una sola llave no basta, y tampoco cae silenciosamente a paper
+        assert!(resolve_mode(Some("live"), false).is_err());
+        assert!(resolve_mode(None, true).is_err());
+        assert!(resolve_mode(Some("paper"), true).is_err());
+        assert!(resolve_mode(Some("LIVE"), true).is_err());
+        assert!(resolve_mode(Some("real"), false).is_err());
+    }
+
+    #[test]
+    fn each_mode_has_its_own_database() {
+        let data = Path::new("data");
+        assert_eq!(
+            database_path(data, TradingMode::Paper),
+            Path::new("data").join("tickforge.db")
+        );
+        assert_eq!(
+            database_path(data, TradingMode::Live),
+            Path::new("data").join("live").join("tickforge.db")
+        );
+    }
+
+    #[test]
+    fn live_defaults_are_stricter_than_paper_defaults() {
+        // Sin variables TICKFORGE_LIVE_* definidas en el entorno de pruebas
+        let live = risk_limits(&LIVE_LIMITS).unwrap();
+        assert_eq!(live.max_order_notional(), Money::usd(Decimal::from(250)));
+        assert_eq!(
+            live.max_position_notional(),
+            Money::usd(Decimal::from(1000))
+        );
+
+        let paper_order = Decimal::from_str(PAPER_LIMITS.max_order_notional).unwrap();
+        let paper_position = Decimal::from_str(PAPER_LIMITS.max_position_notional).unwrap();
+        assert!(live.max_order_notional().amount() < paper_order);
+        assert!(live.max_position_notional().amount() < paper_position);
     }
 
     #[test]

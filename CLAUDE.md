@@ -45,6 +45,10 @@ Workspace de Cargo con un crate por capa. El compilador hace cumplir las depende
 - Cada orden lleva un `client_order_id` único para idempotencia.
 - El modo por defecto es **paper**. No cambiar defaults ni configuraciones hacia modo real (LIVE),
   ni usar llaves reales, sin que el usuario lo pida explícitamente.
+- Modo real: `LiveTradingAuthorization` y `AlpacaConfig::live` solo se usan en `apps/trader-tui/src`
+  (la prueba `no_live_access_in_tests` lo hace cumplir). Nunca debilitar la triple llave
+  (`TICKFORGE_MODE=live` + `--live` + frase), leer llaves reales de `.env` ni quitar el arranque
+  bloqueado sin que el usuario lo pida explícitamente.
 - Nunca escribir llaves de API en código, pruebas, logs ni documentación; se leen de `.env`
   (no versionado) o del `keyring`. `.env.example` solo contiene nombres de variables vacías.
 

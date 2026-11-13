@@ -87,6 +87,31 @@ impl KillSwitchUseCase {
         Ok(report)
     }
 
+    /// Bloquea las órdenes nuevas **sin cancelar** las abiertas. Se usa al iniciar una
+    /// sesión en modo real: la persona revisa la cuenta y desbloquea a propósito. Si ya
+    /// estaba activo, conserva el motivo y la hora originales.
+    pub async fn hold(&self, reason: &str) -> Result<KillSwitch, ApplicationError> {
+        let ports = &self.ports;
+        let current = ports.kill_switch.load().await?;
+        if current.is_engaged() {
+            return Ok(current);
+        }
+
+        let now = ports.clock.now();
+        let engaged = KillSwitch::engaged(now, reason);
+        ports.kill_switch.save(&engaged).await?;
+        // A diferencia de `engage`, aquí no hay nada urgente que proteger: si el diario
+        // falla se informa el error (el bloqueo ya quedó guardado)
+        ports
+            .journal
+            .append(JournalEntry::KillSwitchEngaged {
+                reason: reason.to_owned(),
+                at: now,
+            })
+            .await?;
+        Ok(engaged)
+    }
+
     /// Desactiva el bloqueo. No reabre nada: solo vuelve a permitir órdenes nuevas.
     pub async fn release(&self) -> Result<(), ApplicationError> {
         let ports = &self.ports;

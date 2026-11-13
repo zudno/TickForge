@@ -3,9 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use tickforge_adapter_alpaca::{
-    AlpacaBrokerGateway, AlpacaConfig, AlpacaCredentials, AlpacaMarketData,
-};
+use tickforge_adapter_alpaca::{AlpacaBrokerGateway, AlpacaConfig, AlpacaMarketData};
 use tickforge_adapter_sqlite::{
     SqliteKillSwitchRepository, SqliteOrderJournal, SqliteStore, SqliteWatchlistRepository,
 };
@@ -19,10 +17,13 @@ use tickforge_application::use_cases::trading::{
     WatchOrderUpdatesUseCase,
 };
 use tickforge_domain::risk::RiskPolicy;
-use tickforge_presentation_tui::{TuiConfig, TuiServices};
+use tickforge_presentation_tui::{TradingMode, TuiConfig, TuiServices};
 
 use crate::infrastructure::{SystemClock, TimestampClientOrderIdGenerator, TracingEventPublisher};
 use crate::settings::Settings;
+
+/// Motivo con el que se bloquean las órdenes al iniciar una sesión en modo real.
+const LIVE_SESSION_HOLD_REASON: &str = "inicio de sesión en modo real";
 
 /// Todo lo que el binario necesita para correr la TUI y cerrarse ordenadamente.
 pub struct Application {
@@ -32,14 +33,10 @@ pub struct Application {
     pub store: SqliteStore,
 }
 
-pub async fn build(settings: &Settings) -> anyhow::Result<Application> {
+/// `alpaca` ya viene construida para el modo de `settings`: la de la cuenta real solo existe
+/// si la persona escribió la frase de confirmación (ver `main`).
+pub async fn build(settings: &Settings, mut alpaca: AlpacaConfig) -> anyhow::Result<Application> {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-
-    // Solo se construye la configuración de paper trading (ver `Settings::load`)
-    let mut alpaca = AlpacaConfig::paper(AlpacaCredentials::new(
-        settings.alpaca_key_id.clone(),
-        settings.alpaca_secret_key.clone(),
-    ));
     alpaca.data_feed = settings.data_feed;
 
     let broker: Arc<dyn BrokerGateway> = Arc::new(
@@ -80,6 +77,17 @@ pub async fn build(settings: &Settings) -> anyhow::Result<Application> {
         kill_switch: Arc::new(SqliteKillSwitchRepository::new(store.clone())),
     };
 
+    // En modo real cada sesión empieza con las órdenes nuevas bloqueadas (sin cancelar las
+    // abiertas): la persona revisa la cuenta y desbloquea a propósito con `!`
+    let kill_switch = Arc::new(KillSwitchUseCase::new(trading_ports.clone()));
+    if settings.mode == TradingMode::Live {
+        let held = kill_switch
+            .hold(LIVE_SESSION_HOLD_REASON)
+            .await
+            .context("no se pudo bloquear las órdenes al iniciar el modo real")?;
+        tracing::info!(?held, "modo real: órdenes nuevas bloqueadas al iniciar");
+    }
+
     let services = TuiServices {
         portfolio: Arc::new(GetPortfolioSnapshotUseCase::new(Arc::clone(&broker))),
         watch_market: Arc::new(WatchMarketUseCase::new(market_data, Arc::clone(&clock))),
@@ -91,8 +99,8 @@ pub async fn build(settings: &Settings) -> anyhow::Result<Application> {
         )),
         cancel_order: Arc::new(CancelOrderUseCase::new(trading_ports.clone())),
         order_updates: Arc::new(WatchOrderUpdatesUseCase::new(broker)),
-        reconcile_orders: Arc::new(ReconcileOrdersUseCase::new(trading_ports.clone())),
-        kill_switch: Arc::new(KillSwitchUseCase::new(trading_ports)),
+        reconcile_orders: Arc::new(ReconcileOrdersUseCase::new(trading_ports)),
+        kill_switch,
         clock,
     };
     let config = TuiConfig {
