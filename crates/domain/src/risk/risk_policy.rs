@@ -18,6 +18,10 @@ pub struct RiskContext<'a> {
     pub now: DateTime<Utc>,
     /// Interruptor de emergencia: si está activo, ninguna orden pasa.
     pub kill_switch: &'a KillSwitch,
+    /// Si el mercado está abierto (sesión regular). `None` si no se consultó o no se pudo
+    /// saber; solo importa cuando los límites restringen las órdenes a mercado, y en ese caso
+    /// "no se sabe" cuenta como cerrado.
+    pub market_open: Option<bool>,
 }
 
 /// Resultado de la evaluación: aprobada si no hay violaciones.
@@ -68,6 +72,7 @@ impl RiskPolicy {
             quote,
             now,
             kill_switch,
+            market_open,
         } = *context;
 
         ensure_same_symbol(request, quote.symbol())?;
@@ -84,6 +89,12 @@ impl RiskPolicy {
         }
         if account.is_trading_blocked() {
             violations.push(RiskViolation::TradingBlocked);
+        }
+        if self.limits.market_orders_require_open_market()
+            && request.order_type().limit_price().is_none()
+            && market_open != Some(true)
+        {
+            violations.push(RiskViolation::MarketOrderOutsideRegularHours);
         }
 
         let quote_age = quote.age(now);
@@ -258,6 +269,7 @@ mod tests {
                 quote,
                 now: at(NOW),
                 kill_switch: &KillSwitch::Released,
+                market_open: None,
             })
             .unwrap()
     }
@@ -286,6 +298,7 @@ mod tests {
                 quote: &quote("AAPL", dec!(189.10), dec!(189.12), NOW),
                 now: at(NOW),
                 kill_switch: &kill_switch,
+                market_open: None,
             })
             .unwrap();
 
@@ -436,8 +449,59 @@ mod tests {
             quote: &quote("MSFT", dec!(400), dec!(400.05), NOW),
             now: at(NOW),
             kill_switch: &KillSwitch::Released,
+            market_open: None,
         });
 
         assert!(matches!(result, Err(DomainError::SymbolMismatch { .. })));
+    }
+
+    fn evaluate_with_market(request: &OrderRequest, market_open: Option<bool>) -> RiskAssessment {
+        let strict = RiskPolicy::new(policy().limits().restrict_market_orders_to_open_market());
+        strict
+            .evaluate(&RiskContext {
+                request,
+                account: &account(dec!(50000), false),
+                position: None,
+                quote: &quote("AAPL", dec!(189.10), dec!(189.12), NOW),
+                now: at(NOW),
+                kill_switch: &KillSwitch::Released,
+                market_open,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn restricted_market_orders_need_a_confirmed_open_market() {
+        let market = order(OrderSide::Buy, OrderType::Market, dec!(1));
+        assert!(evaluate_with_market(&market, Some(true)).is_approved());
+
+        // Cerrado o desconocido: se bloquea (lo desconocido cuenta como cerrado)
+        for market_open in [Some(false), None] {
+            assert_eq!(
+                evaluate_with_market(&market, market_open).violations(),
+                [RiskViolation::MarketOrderOutsideRegularHours],
+                "market_open = {market_open:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_market_hours_rule_never_affects_limit_orders_or_relaxed_limits() {
+        let limit_order = order(OrderSide::Buy, limit(dec!(189.12)), dec!(1));
+        assert!(evaluate_with_market(&limit_order, Some(false)).is_approved());
+        assert!(evaluate_with_market(&limit_order, None).is_approved());
+
+        // Sin la restricción (paper), el horario no importa
+        let market = order(OrderSide::Buy, OrderType::Market, dec!(1));
+        assert!(!policy().limits().market_orders_require_open_market());
+        assert!(
+            evaluate(
+                &market,
+                &account(dec!(50000), false),
+                None,
+                &quote("AAPL", dec!(189.10), dec!(189.12), NOW),
+            )
+            .is_approved()
+        );
     }
 }

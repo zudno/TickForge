@@ -40,6 +40,29 @@ pub fn live_badge() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+/// Borde de un panel: cian con el foco; sin foco, rojo en modo real (para que el dinero
+/// real se note en toda la pantalla) y neutro en paper.
+pub fn panel_border(live: bool, focused: bool) -> Style {
+    match (focused, live) {
+        (true, _) => Style::new().fg(ACCENT),
+        (false, true) => Style::new().fg(NEGATIVE),
+        (false, false) => Style::new(),
+    }
+}
+
+/// Texto de la insignia del modo, igual en todas las ventanas.
+pub fn mode_label(live: bool) -> &'static str {
+    if live {
+        " LIVE · DINERO REAL "
+    } else {
+        " PAPER "
+    }
+}
+
+pub fn mode_badge(live: bool) -> Style {
+    if live { live_badge() } else { paper_badge() }
+}
+
 /// Insignia del kill switch activo: imposible de pasar por alto.
 pub fn kill_switch_badge() -> Style {
     Style::new()

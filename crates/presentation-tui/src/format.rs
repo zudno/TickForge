@@ -74,6 +74,15 @@ pub fn percent(value: Option<Decimal>) -> String {
     }
 }
 
+/// Número de cuenta con solo los últimos 4 caracteres visibles: `••••7890`.
+pub fn masked_account(number: &str) -> String {
+    let characters: Vec<char> = number.chars().collect();
+    let visible: String = characters[characters.len().saturating_sub(4)..]
+        .iter()
+        .collect();
+    format!("••••{visible}")
+}
+
 /// Hora de Nueva York (la de la bolsa), por ejemplo `14:30:05 ET`.
 pub fn new_york_time(instant: DateTime<Utc>) -> String {
     instant

@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 /// `GET /v2/account`
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct AccountWire {
+    #[serde(default)]
+    pub account_number: Option<String>,
     pub currency: String,
     pub cash: String,
     pub equity: String,

@@ -4,12 +4,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::labels;
-use crate::state::CancelConfirmation;
+use crate::state::{AppState, CancelConfirmation};
 use crate::theme;
 use crate::ui::modal;
 
 /// Confirmación antes de cancelar una orden abierta.
-pub(super) fn render(frame: &mut Frame, confirmation: &CancelConfirmation) {
+pub(super) fn render(frame: &mut Frame, state: &AppState, confirmation: &CancelConfirmation) {
     let order = &confirmation.order;
     let mut lines = vec![
         Line::from(Span::styled(
@@ -41,12 +41,15 @@ pub(super) fn render(frame: &mut Frame, confirmation: &CancelConfirmation) {
     };
     lines.push(Line::from(Span::styled(hint, theme::muted())));
 
-    let block = Block::bordered()
+    let mut block = Block::bordered()
         .border_style(Style::new().fg(theme::WARNING))
         .title(Span::styled(
             " Cancelar orden ",
             Style::new().fg(theme::WARNING).add_modifier(Modifier::BOLD),
         ));
+    if state.is_live() {
+        block = block.title(crate::ui::mode_title(true));
+    }
     let area = modal::centered(frame.area(), 60, modal::height_for(lines.len()));
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).block(block), area);

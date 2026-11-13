@@ -13,6 +13,9 @@ pub struct RiskLimits {
     max_position_notional: Money,
     max_price_deviation_pct: Decimal,
     max_quote_age: TimeDelta,
+    /// Las órdenes a mercado solo se aceptan con el mercado abierto (sesión regular). Fuera de
+    /// ella la liquidez es baja y el precio de ejecución puede alejarse mucho de la cotización.
+    market_orders_require_open_market: bool,
 }
 
 impl RiskLimits {
@@ -52,7 +55,18 @@ impl RiskLimits {
             max_position_notional,
             max_price_deviation_pct,
             max_quote_age,
+            market_orders_require_open_market: false,
         })
+    }
+
+    /// Exige que el mercado esté abierto para aceptar órdenes a mercado (se usa en modo real).
+    pub fn restrict_market_orders_to_open_market(mut self) -> Self {
+        self.market_orders_require_open_market = true;
+        self
+    }
+
+    pub fn market_orders_require_open_market(&self) -> bool {
+        self.market_orders_require_open_market
     }
 
     /// Valor máximo de una sola orden.

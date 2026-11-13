@@ -1,0 +1,28 @@
+---
+source: crates/presentation-tui/src/ui/tests.rs
+expression: draw(&live_state())
+---
+┌ TickForge ─ Alpaca ••••7890 ─ LIVE · DINERO REAL ─ ⛔  KILL SWITCH ACTIVO · órdenes bloqueadas · ! para desactivar ───┐
+│Equity 101,250.75 │ Efectivo 99,355.75 │ Poder de compra 99,355.75 │ P&L día +1,250.75 (+1.25%)                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Watchlist ─────────────────────────────────────────────────────────┐┌ Posiciones (1) ────────────────────────────────┐
+│Símbolo     Último    C┌ ⚠ Sesión en cuenta real ─ LIVE · DINERO REAL ────────────────────────┐dio                 P&L│
+│AAPL        189.11    +│Vas a operar con DINERO REAL. Revisa que esta sea la cuenta correcta. │.00              +41.10│
+│SPY         512.40     │                                                                      │                       │
+│                       │Cuenta              Alpaca ••••7890                                   │                       │
+│                       │Equity              101,250.75 USD                                    │                       │
+│                       │Efectivo            99,355.75 USD                                     │                       │
+│                       │Poder de compra     99,355.75 USD                                     │                       │
+│                       │                                                                      │───────────────────────┘
+│                       │Posiciones          1                                                 │───────────────────────┐
+│                       │    AAPL             10 acc. · promedio 185.00                        │comprar · s vender     │
+│                       │Órdenes abiertas    0                                                 │                       │
+│                       │                                                                      │                       │
+│                       │⛔  Órdenes nuevas BLOQUEADAS (inicio de sesión en modo real).         │                       │
+│                       │Cuando estés listo para operar, pulsa ! en la pantalla principal.     │                       │
+│                       │                                                                      │                       │
+│                       │Enter continuar · q salir                                             │                       │
+│                       └──────────────────────────────────────────────────────────────────────┘                       │
+│                                                                    ││                                                │
+└────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────┘
+ LIVE · DINERO REAL   ⛔  DETENIDO  Mercado ABIERTO · cierra en 6h 00m │ ○ Conectando… │ 10:00:00 ET │  ? ayuda  q salir

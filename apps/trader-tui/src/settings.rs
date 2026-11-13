@@ -82,9 +82,11 @@ impl Settings {
 
         let data_dir =
             optional("TICKFORGE_DATA_DIR").map_or_else(|| PathBuf::from("data"), PathBuf::from);
-        let defaults = match mode {
-            TradingMode::Paper => &PAPER_LIMITS,
-            TradingMode::Live => &LIVE_LIMITS,
+        let risk_limits = match mode {
+            TradingMode::Paper => risk_limits(&PAPER_LIMITS)?,
+            // En real, además, las órdenes a mercado solo con el mercado abierto (no es
+            // configurable: fuera de horario la ejecución puede alejarse mucho de la cotización)
+            TradingMode::Live => risk_limits(&LIVE_LIMITS)?.restrict_market_orders_to_open_market(),
         };
 
         Ok(Self {
@@ -94,7 +96,7 @@ impl Settings {
             database_path: database_path(&data_dir, mode),
             log_dir: optional("TICKFORGE_LOG_DIR")
                 .map_or_else(|| PathBuf::from("logs"), PathBuf::from),
-            risk_limits: risk_limits(defaults)?,
+            risk_limits,
         })
     }
 }

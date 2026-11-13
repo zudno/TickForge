@@ -15,7 +15,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let [left_area, right_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(hint_width)]).areas(area);
 
-    let mut spans = vec![mode_badge(state.mode), Span::raw(" ")];
+    let mut spans = vec![
+        crate::ui::mode_title(state.mode == TradingMode::Live),
+        Span::raw(" "),
+    ];
     if state.kill_switch.is_engaged() {
         spans.push(Span::styled(" ⛔ DETENIDO ", theme::kill_switch_badge()));
         spans.push(Span::raw(" "));
@@ -38,13 +41,6 @@ pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Paragraph::new(Span::styled(hint, theme::muted())),
         right_area,
     );
-}
-
-fn mode_badge(mode: TradingMode) -> Span<'static> {
-    match mode {
-        TradingMode::Paper => Span::styled(" PAPER ", theme::paper_badge()),
-        TradingMode::Live => Span::styled(" LIVE ", theme::live_badge()),
-    }
 }
 
 fn market_session(state: &AppState) -> Vec<Span<'static>> {

@@ -75,6 +75,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
         Action::TicketBackspace => with_ticket(state, OrderTicket::backspace),
         Action::RequestCancelSelected => request_cancel(state),
         Action::OpenKillSwitch => open_kill_switch(state),
+        Action::ConfirmSymbolInput(character) => {
+            with_typed_symbol(state, |input| input.input(character))
+        }
+        Action::ConfirmSymbolBackspace => with_typed_symbol(state, SymbolInput::backspace),
 
         // --- Watchlist ---
         Action::OpenAddSymbol => {
@@ -146,11 +150,14 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
 
         // --- Kill switch ---
         Action::KillSwitchLoaded(kill_switch) => {
-            if kill_switch.is_engaged() {
+            if let tickforge_domain::risk::KillSwitch::Engaged { reason, .. } = &kill_switch {
                 state.notifications.push(
                     now,
                     NotificationLevel::Warning,
-                    "El kill switch sigue activo desde la sesión anterior: órdenes bloqueadas",
+                    format!(
+                        "Órdenes nuevas bloqueadas por el kill switch ({reason}). \
+                         Pulsa ! cuando quieras operar"
+                    ),
                 );
             }
             state.kill_switch = kill_switch;
@@ -283,6 +290,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
                     ticket,
                     submitting: false,
                     error: None,
+                    typed_symbol: None,
                 });
             }
         }
@@ -433,6 +441,16 @@ fn open_kill_switch(state: &mut AppState) {
     });
 }
 
+/// Texto de la segunda confirmación (modo real), mientras no se esté enviando.
+fn with_typed_symbol(state: &mut AppState, update: impl FnOnce(&mut SymbolInput)) {
+    if let Overlay::Preview(preview) = &mut state.overlay
+        && !preview.submitting
+        && let Some(input) = &mut preview.typed_symbol
+    {
+        update(input);
+    }
+}
+
 fn with_symbol_input(state: &mut AppState, update: impl FnOnce(&mut SymbolInput)) {
     if let Overlay::AddSymbol(input) = &mut state.overlay
         && !input.awaiting
@@ -471,8 +489,17 @@ fn request_cancel(state: &mut AppState) {
 /// `Esc`: cierra la ventana activa. Desde la confirmación se vuelve al ticket para editar.
 /// Mientras se espera al broker no se cierra nada, para no perder el resultado.
 fn close_overlay(state: &mut AppState) {
+    let portfolio_loaded = state.portfolio.is_some();
     state.overlay = match std::mem::take(&mut state.overlay) {
+        // Modo real: desde la segunda confirmación se vuelve a la vista previa
+        Overlay::Preview(mut preview) if !preview.submitting && preview.typed_symbol.is_some() => {
+            preview.typed_symbol = None;
+            preview.error = None;
+            Overlay::Preview(preview)
+        }
         Overlay::Preview(preview) if !preview.submitting => Overlay::Ticket(preview.ticket),
+        // El resumen de la cuenta real no se puede saltar antes de verlo
+        Overlay::LiveSessionStart if !portfolio_loaded => Overlay::LiveSessionStart,
         Overlay::CancelConfirm(confirmation) if confirmation.submitting => {
             Overlay::CancelConfirm(confirmation)
         }
@@ -486,14 +513,23 @@ fn close_overlay(state: &mut AppState) {
         | Overlay::Ticket(_)
         | Overlay::CancelConfirm(_)
         | Overlay::AddSymbol(_)
-        | Overlay::KillSwitch(_) => Overlay::None,
+        | Overlay::KillSwitch(_)
+        | Overlay::LiveSessionStart => Overlay::None,
     };
 }
 
 /// `Enter`: ticket → vista previa → envío; confirmación de cancelación → cancelar.
 fn confirm(state: &mut AppState) -> Vec<Command> {
     let current_symbols = state.watchlist.symbols();
+    let live = state.is_live();
+    let portfolio_loaded = state.portfolio.is_some();
     match &mut state.overlay {
+        Overlay::LiveSessionStart => {
+            if portfolio_loaded {
+                state.overlay = Overlay::None;
+            }
+            Vec::new()
+        }
         Overlay::AddSymbol(input) if !input.awaiting => match Symbol::new(&input.text) {
             Ok(symbol) => {
                 input.awaiting = true;
@@ -527,6 +563,9 @@ fn confirm(state: &mut AppState) -> Vec<Command> {
         Overlay::Preview(preview)
             if !preview.submitting && preview.preview.assessment.is_approved() =>
         {
+            if live && !second_confirmation_passed(preview) {
+                return Vec::new();
+            }
             preview.submitting = true;
             preview.error = None;
             vec![Command::SubmitOrder(preview.preview.request.clone())]
@@ -546,6 +585,25 @@ fn confirm(state: &mut AppState) -> Vec<Command> {
             }
         }
         _ => Vec::new(),
+    }
+}
+
+/// Modo real: el primer `Enter` pide escribir el símbolo; el siguiente solo pasa si coincide
+/// exactamente. Devuelve `true` cuando la orden puede enviarse.
+fn second_confirmation_passed(preview: &mut PreviewOverlay) -> bool {
+    let symbol = preview.preview.request.symbol().as_str();
+    match &mut preview.typed_symbol {
+        None => {
+            preview.typed_symbol = Some(SymbolInput::default());
+            false
+        }
+        Some(input) if input.text == symbol => true,
+        Some(input) => {
+            input.error = Some(format!(
+                "Escribe {symbol} exactamente para enviar con dinero real"
+            ));
+            false
+        }
     }
 }
 

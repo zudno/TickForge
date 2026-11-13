@@ -87,7 +87,11 @@ impl AppState {
             stream_status: StreamStatus::Connecting,
             order_stream_status: StreamStatus::Connecting,
             notifications: Notifications::default(),
-            overlay: Overlay::None,
+            // En real, la sesión empieza mostrando la cuenta antes que nada
+            overlay: match mode {
+                TradingMode::Paper => Overlay::None,
+                TradingMode::Live => Overlay::LiveSessionStart,
+            },
             focus: Panel::Watchlist,
             selected_order: 0,
             kill_switch: KillSwitch::Released,
@@ -98,6 +102,10 @@ impl AppState {
             last_market_event_at: None,
             order_stream_was_connected: false,
         }
+    }
+
+    pub fn is_live(&self) -> bool {
+        self.mode == TradingMode::Live
     }
 
     /// Órdenes abiertas según el último portafolio cargado.

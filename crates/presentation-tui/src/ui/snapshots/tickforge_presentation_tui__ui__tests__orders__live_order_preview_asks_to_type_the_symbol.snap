@@ -1,0 +1,28 @@
+---
+source: crates/presentation-tui/src/ui/tests.rs
+expression: draw(&state)
+---
+┌ TickForge ─ Alpaca ••••7890 ─ LIVE · DINERO REAL ────────────────────────────────────────────────────────────────────┐
+│Equity 101,250.75 │ Efectivo 99,355.75 │ Poder de compra 99,355.75 │ P&L día +1,250.75 (+1.25%)                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Watchlist ─────────────────────────────────────────────────────────┐┌ Posiciones (1) ────────────────────────────────┐
+│Símbolo     Último    C┌ Confirmar orden ─ LIVE · DINERO REAL ────────────────────────────────┐dio                 P&L│
+│AAPL        189.11    +│⚠ DINERO REAL · cuenta ••••7890                                       │.00              +41.10│
+│SPY         512.40     │                                                                      │                       │
+│                       │COMPRA 10 AAPL                                                        │                       │
+│                       │Tipo                  Límite 185.50 · Día                             │                       │
+│                       │Precio de referencia  185.50                                          │                       │
+│                       │Costo estimado        1,855.00 USD                                    │                       │
+│                       │Poder de compra       99,355.75 USD                                   │───────────────────────┘
+│                       │Posición              10 → 20                                         │───────────────────────┐
+│                       │                                                                      │comprar · s vender     │
+│                       │✓ Cumple todas las validaciones de riesgo                             │                       │
+│                       │                                                                      │                       │
+│                       │Para enviar con dinero real, escribe AAPL:                            │                       │
+│                       │› AAP_                                                                │                       │
+│                       │                                                                      │                       │
+│                       │Enter enviar · Esc volver                                             │                       │
+│                       └──────────────────────────────────────────────────────────────────────┘                       │
+│                                                                    ││                                                │
+└────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────┘
+ LIVE · DINERO REAL  Mercado ABIERTO · cierra en 6h 00m │ ○ Conectando… │ 10:00:00 ET │ Kill switch de ? ayuda  q salir

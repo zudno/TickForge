@@ -243,6 +243,7 @@ fn rejected_assessment() -> RiskAssessment {
             quote: &quote,
             now: at(1_000),
             kill_switch: &tickforge_domain::risk::KillSwitch::Released,
+            market_open: None,
         })
         .unwrap();
     assert!(
@@ -679,7 +680,7 @@ fn startup_loads_the_saved_kill_switch() {
             .latest()
             .unwrap()
             .message
-            .contains("sigue activo")
+            .contains("activado desde la TUI")
     );
 }
 
@@ -779,4 +780,137 @@ fn while_engaged_tickets_do_not_open_and_bang_offers_to_release() {
     reduce(&mut state, Action::KillSwitchReleased);
     assert!(!state.kill_switch.is_engaged());
     assert_eq!(state.overlay, Overlay::None);
+}
+
+// --- Modo real ---
+
+/// Estado en modo real con la watchlist sembrada (el resumen de cuenta aún abierto).
+fn live_state() -> AppState {
+    let mut state = state();
+    state.mode = TradingMode::Live;
+    state.overlay = Overlay::LiveSessionStart;
+    state
+}
+
+#[test]
+fn live_mode_opens_with_the_account_summary_and_paper_does_not() {
+    let live = AppState::new(TradingMode::Live, "Alpaca", vec![aapl()], at(1_000));
+    assert_eq!(live.overlay, Overlay::LiveSessionStart);
+    let paper = AppState::new(TradingMode::Paper, "Alpaca", vec![aapl()], at(1_000));
+    assert_eq!(paper.overlay, Overlay::None);
+}
+
+#[test]
+fn the_live_summary_cannot_be_skipped_before_the_account_loads() {
+    let mut state = live_state();
+
+    // Sin cuenta cargada, ni Enter ni Esc lo cierran, y las teclas de órdenes no hacen nada
+    reduce(&mut state, Action::Confirm);
+    reduce(&mut state, Action::CloseOverlay);
+    reduce(&mut state, Action::OpenTicket(OrderSide::Buy));
+    assert_eq!(state.overlay, Overlay::LiveSessionStart);
+
+    reduce(
+        &mut state,
+        Action::PortfolioLoaded(portfolio_with(Vec::new())),
+    );
+    reduce(&mut state, Action::Confirm);
+    assert_eq!(state.overlay, Overlay::None);
+}
+
+/// Modo real con la vista previa aprobada en pantalla.
+fn live_preview() -> AppState {
+    let mut state = live_state();
+    reduce(
+        &mut state,
+        Action::PortfolioLoaded(portfolio_with(Vec::new())),
+    );
+    reduce(&mut state, Action::Confirm);
+    ticket_awaiting_preview(&mut state);
+    reduce(
+        &mut state,
+        Action::OrderPreviewReady(preview(RiskAssessment::default())),
+    );
+    state
+}
+
+fn typed_symbol(state: &AppState) -> Option<&SymbolInput> {
+    match &state.overlay {
+        Overlay::Preview(preview) => preview.typed_symbol.as_ref(),
+        _ => None,
+    }
+}
+
+#[test]
+fn live_orders_need_the_symbol_typed_before_they_are_sent() {
+    let mut state = live_preview();
+
+    // Primer Enter: no envía, pide escribir el símbolo
+    assert!(reduce(&mut state, Action::Confirm).is_empty());
+    assert!(typed_symbol(&state).is_some());
+
+    // Un símbolo distinto no envía y lo explica
+    for character in "AAP".chars() {
+        reduce(&mut state, Action::ConfirmSymbolInput(character));
+    }
+    assert!(reduce(&mut state, Action::Confirm).is_empty());
+    let error = typed_symbol(&state).unwrap().error.clone().unwrap();
+    assert!(error.contains("AAPL"), "{error}");
+
+    // El símbolo exacto (se normaliza a mayúsculas) envía la solicitud evaluada
+    reduce(&mut state, Action::ConfirmSymbolBackspace);
+    for character in "pl".chars() {
+        reduce(&mut state, Action::ConfirmSymbolInput(character));
+    }
+    assert_eq!(
+        reduce(&mut state, Action::Confirm),
+        vec![Command::SubmitOrder(request())]
+    );
+}
+
+#[test]
+fn escape_from_the_typed_confirmation_returns_to_the_preview() {
+    let mut state = live_preview();
+    reduce(&mut state, Action::Confirm);
+    reduce(&mut state, Action::ConfirmSymbolInput('A'));
+
+    reduce(&mut state, Action::CloseOverlay);
+    assert!(matches!(state.overlay, Overlay::Preview(_)));
+    assert!(typed_symbol(&state).is_none());
+
+    // Un segundo Esc vuelve al ticket, como en paper
+    reduce(&mut state, Action::CloseOverlay);
+    assert!(matches!(state.overlay, Overlay::Ticket(_)));
+}
+
+#[test]
+fn paper_orders_keep_the_single_confirmation() {
+    let mut state = state();
+    ticket_awaiting_preview(&mut state);
+    reduce(
+        &mut state,
+        Action::OrderPreviewReady(preview(RiskAssessment::default())),
+    );
+    assert_eq!(
+        reduce(&mut state, Action::Confirm),
+        vec![Command::SubmitOrder(request())]
+    );
+}
+
+#[test]
+fn a_blocked_live_preview_never_asks_for_the_symbol() {
+    let mut state = live_state();
+    reduce(
+        &mut state,
+        Action::PortfolioLoaded(portfolio_with(Vec::new())),
+    );
+    reduce(&mut state, Action::Confirm);
+    ticket_awaiting_preview(&mut state);
+    reduce(
+        &mut state,
+        Action::OrderPreviewReady(preview(rejected_assessment())),
+    );
+
+    assert!(reduce(&mut state, Action::Confirm).is_empty());
+    assert!(typed_symbol(&state).is_none());
 }

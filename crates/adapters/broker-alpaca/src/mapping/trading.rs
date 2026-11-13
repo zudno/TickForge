@@ -26,7 +26,11 @@ pub(crate) fn account(wire: AccountWire) -> Result<Account, MappingError> {
     };
     // Cualquiera de los dos bloqueos impide operar
     let blocked = wire.trading_blocked || wire.account_blocked;
-    Ok(Account::new(balances, blocked)?)
+    let account = Account::new(balances, blocked)?;
+    Ok(match wire.account_number {
+        Some(number) => account.with_number(number),
+        None => account,
+    })
 }
 
 pub(crate) fn position(wire: PositionWire) -> Result<Position, MappingError> {

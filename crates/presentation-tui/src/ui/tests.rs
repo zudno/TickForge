@@ -207,6 +207,7 @@ mod orders {
             ticket,
             submitting: false,
             error: None,
+            typed_symbol: None,
         }
     }
 
@@ -238,6 +239,7 @@ mod orders {
                 quote: &quote,
                 now: at("2024-03-01T15:00:00Z"),
                 kill_switch: &tickforge_domain::risk::KillSwitch::Released,
+                market_open: None,
             })
             .unwrap()
     }
@@ -259,6 +261,20 @@ mod orders {
     fn renders_approved_order_preview() {
         let mut state = loaded_state();
         state.overlay = Overlay::Preview(preview(RiskAssessment::default()));
+        insta::assert_snapshot!(draw(&state));
+    }
+
+    #[test]
+    fn live_order_preview_asks_to_type_the_symbol() {
+        let mut state = live_state();
+        reduce(&mut state, Action::Confirm);
+        // Con el kill switch activo la vista previa nunca saldría aprobada: se desactiva
+        reduce(&mut state, Action::KillSwitchReleased);
+        state.overlay = Overlay::Preview(preview(RiskAssessment::default()));
+        reduce(&mut state, Action::Confirm);
+        for character in "AAP".chars() {
+            reduce(&mut state, Action::ConfirmSymbolInput(character));
+        }
         insta::assert_snapshot!(draw(&state));
     }
 
@@ -332,5 +348,36 @@ fn engaged_kill_switch_is_impossible_to_miss() {
             "activado desde la TUI",
         )),
     );
+    insta::assert_snapshot!(draw(&state));
+}
+
+/// Modo real con la cuenta cargada (incluye número de cuenta) y las órdenes bloqueadas al
+/// iniciar, como las deja el composition root. El resumen de la cuenta sigue abierto.
+fn live_state() -> AppState {
+    let mut state = loaded_state();
+    state.mode = TradingMode::Live;
+    state.overlay = crate::state::Overlay::LiveSessionStart;
+    if let Some(portfolio) = state.portfolio.as_mut() {
+        portfolio.account = portfolio.account.clone().with_number("PA3EXAMPLE7890");
+    }
+    reduce(
+        &mut state,
+        Action::KillSwitchLoaded(tickforge_domain::risk::KillSwitch::engaged(
+            at("2024-03-01T15:00:00Z"),
+            "inicio de sesión en modo real",
+        )),
+    );
+    state
+}
+
+#[test]
+fn live_session_starts_with_the_account_summary() {
+    insta::assert_snapshot!(draw(&live_state()));
+}
+
+#[test]
+fn live_main_screen_is_unmistakable() {
+    let mut state = live_state();
+    reduce(&mut state, Action::Confirm);
     insta::assert_snapshot!(draw(&state));
 }

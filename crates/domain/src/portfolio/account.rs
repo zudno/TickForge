@@ -17,10 +17,13 @@ pub struct AccountBalances {
 }
 
 /// Cuenta de corretaje del usuario.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Account {
     balances: AccountBalances,
     trading_blocked: bool,
+    /// Número de cuenta del broker, si lo informa. Sirve para que la persona confirme en
+    /// qué cuenta está operando; la TUI solo muestra los últimos dígitos.
+    number: Option<String>,
 }
 
 impl Account {
@@ -50,7 +53,19 @@ impl Account {
         Ok(Self {
             balances,
             trading_blocked,
+            number: None,
         })
+    }
+
+    /// Agrega el número de cuenta del broker (se ignora si está vacío).
+    pub fn with_number(mut self, number: impl Into<String>) -> Self {
+        let number = number.into().trim().to_owned();
+        self.number = (!number.is_empty()).then_some(number);
+        self
+    }
+
+    pub fn number(&self) -> Option<&str> {
+        self.number.as_deref()
     }
 
     pub fn equity(&self) -> Money {
@@ -141,5 +156,16 @@ mod tests {
 
         assert!(account.can_afford(Money::usd(dec!(500))).unwrap());
         assert!(!account.can_afford(Money::usd(dec!(500.01))).unwrap());
+    }
+
+    #[test]
+    fn account_number_is_optional_and_trimmed() {
+        let account = Account::new(balances(dec!(100), dec!(100), dec!(100)), false).unwrap();
+        assert_eq!(account.number(), None);
+        assert_eq!(
+            account.clone().with_number(" 123456789 ").number(),
+            Some("123456789")
+        );
+        assert_eq!(account.with_number("   ").number(), None);
     }
 }

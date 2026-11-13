@@ -25,10 +25,26 @@ pub fn map_event(event: &Event, state: &AppState) -> Option<Action> {
         )
         .then_some(Action::CloseOverlay),
         Overlay::Ticket(_) => ticket(key),
+        // Modo real: al escribir el símbolo de confirmación, las letras son texto
+        Overlay::Preview(preview) if preview.typed_symbol.is_some() => match key.code {
+            KeyCode::Enter => Some(Action::Confirm),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Backspace => Some(Action::ConfirmSymbolBackspace),
+            KeyCode::Char(character) if is_symbol_character(character) => {
+                Some(Action::ConfirmSymbolInput(character))
+            }
+            _ => None,
+        },
         // En las confirmaciones solo se acepta una respuesta explícita
         Overlay::Preview(_) => match key.code {
             KeyCode::Enter => Some(Action::Confirm),
             KeyCode::Esc => Some(Action::CloseOverlay),
+            _ => None,
+        },
+        Overlay::LiveSessionStart => match key.code {
+            KeyCode::Enter => Some(Action::Confirm),
+            KeyCode::Esc => Some(Action::CloseOverlay),
+            KeyCode::Char('q') => Some(Action::Quit),
             _ => None,
         },
         Overlay::CancelConfirm(_) => match key.code {
@@ -47,9 +63,7 @@ pub fn map_event(event: &Event, state: &AppState) -> Option<Action> {
             KeyCode::Enter => Some(Action::Confirm),
             KeyCode::Esc => Some(Action::CloseOverlay),
             KeyCode::Backspace => Some(Action::AddSymbolBackspace),
-            KeyCode::Char(character)
-                if character.is_ascii_alphanumeric() || character == '.' || character == '-' =>
-            {
+            KeyCode::Char(character) if is_symbol_character(character) => {
                 Some(Action::AddSymbolInput(character))
             }
             _ => None,
@@ -89,6 +103,10 @@ fn ticket(key: &KeyEvent) -> Option<Action> {
         }
         _ => None,
     }
+}
+
+fn is_symbol_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '.' || character == '-'
 }
 
 fn is_force_quit(key: &KeyEvent) -> bool {
@@ -208,5 +226,76 @@ mod tests {
 
         assert_eq!(key(KeyCode::Char('j'), &state), None);
         assert_eq!(key(KeyCode::Esc, &state), Some(Action::CloseOverlay));
+    }
+
+    #[test]
+    fn live_symbol_confirmation_captures_letters() {
+        use tickforge_application::use_cases::trading::OrderPreview;
+        use tickforge_domain::risk::RiskAssessment;
+        use tickforge_domain::shared::{Money, Price, Quantity};
+        use tickforge_domain::trading::{ClientOrderId, OrderRequest, OrderType, TimeInForce};
+
+        use crate::state::{PreviewOverlay, SymbolInput};
+
+        let request = OrderRequest::new(
+            ClientOrderId::new("tf-1").unwrap(),
+            Symbol::new("AAPL").unwrap(),
+            OrderSide::Buy,
+            OrderType::Market,
+            Quantity::new(rust_decimal::Decimal::ONE).unwrap(),
+            TimeInForce::Day,
+        )
+        .unwrap();
+        let Overlay::Ticket(ticket) = with_ticket().overlay else {
+            panic!("se esperaba el ticket");
+        };
+        let mut preview = PreviewOverlay {
+            preview: OrderPreview {
+                request,
+                reference_price: Some(Price::new(rust_decimal::Decimal::ONE).unwrap()),
+                estimated_notional: None,
+                buying_power: Money::usd(rust_decimal::Decimal::ONE),
+                position_quantity: Quantity::ZERO,
+                assessment: RiskAssessment::default(),
+            },
+            ticket,
+            submitting: false,
+            error: None,
+            typed_symbol: None,
+        };
+
+        // Sin la segunda confirmación, las letras no hacen nada (ni `q` sale)
+        let mut state = state();
+        state.overlay = Overlay::Preview(preview.clone());
+        assert_eq!(key(KeyCode::Char('a'), &state), None);
+        assert_eq!(key(KeyCode::Char('q'), &state), None);
+
+        // Con ella, las letras son el símbolo que se escribe
+        preview.typed_symbol = Some(SymbolInput::default());
+        state.overlay = Overlay::Preview(preview);
+        assert_eq!(
+            key(KeyCode::Char('a'), &state),
+            Some(Action::ConfirmSymbolInput('a'))
+        );
+        assert_eq!(
+            key(KeyCode::Char('q'), &state),
+            Some(Action::ConfirmSymbolInput('q'))
+        );
+        assert_eq!(
+            key(KeyCode::Backspace, &state),
+            Some(Action::ConfirmSymbolBackspace)
+        );
+        assert_eq!(key(KeyCode::Enter, &state), Some(Action::Confirm));
+        assert_eq!(key(KeyCode::Esc, &state), Some(Action::CloseOverlay));
+    }
+
+    #[test]
+    fn live_session_summary_only_accepts_continue_or_quit() {
+        let mut state = state();
+        state.overlay = Overlay::LiveSessionStart;
+        assert_eq!(key(KeyCode::Char('b'), &state), None);
+        assert_eq!(key(KeyCode::Char('!'), &state), None);
+        assert_eq!(key(KeyCode::Enter, &state), Some(Action::Confirm));
+        assert_eq!(key(KeyCode::Char('q'), &state), Some(Action::Quit));
     }
 }
