@@ -29,7 +29,8 @@ Workspace de Cargo con un crate por capa. El compilador hace cumplir las depende
 - Los structs de la API externa (wire models) viven en `wire/` dentro de cada adaptador y se
   traducen al dominio en `mapping.rs`. Nunca exponer tipos wire fuera del adaptador.
 - Nuevo crate: agregarlo a `members` y a `[workspace.dependencies]` del `Cargo.toml` raíz,
-  heredar `version/edition/rust-version/publish` del workspace y declarar `[lints] workspace = true`.
+  heredar `version/edition/rust-version/publish/license` del workspace y declarar `[lints] workspace = true`.
+- Licencia: `MIT OR Apache-2.0` (`LICENSE-MIT` y `LICENSE-APACHE`).
 - Dependencias externas: declarar la versión una sola vez en `[workspace.dependencies]` y usar
   `dep.workspace = true` en cada crate.
 
