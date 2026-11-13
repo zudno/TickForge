@@ -301,7 +301,8 @@ pub trait SignalGenerator: Send + Sync {
 - [x] `deny.toml` (licencias permisivas, vulnerabilidades, solo crates.io).
 - [x] CI en GitHub Actions: `fmt`, `clippy -D warnings` y `test` en Linux y Windows, más `cargo-deny`.
 - [ ] Crate `telemetry` y logging a archivo (se hará junto con la TUI, fase 4).
-- [ ] Elegir licencia del proyecto (el repo es público y aún no tiene `LICENSE`).
+- [x] Licencia: doble `MIT OR Apache-2.0` (convención del ecosistema Rust), en `LICENSE-MIT` y `LICENSE-APACHE`, declarada en `[workspace.package]`.
+- [x] GitHub borra la rama de cada PR al fusionarlo ("Automatically delete head branches").
 
 ### Fase 1 — Dominio
 
