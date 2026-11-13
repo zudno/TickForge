@@ -25,6 +25,9 @@ pub(crate) struct QuoteWire {
 pub(crate) struct BarsResponseWire {
     /// Puede llegar como `null` cuando no hay velas en el rango.
     pub bars: Option<Vec<BarWire>>,
+    /// Ficha para pedir la siguiente página; `null` en la última.
+    #[serde(default)]
+    pub next_page_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

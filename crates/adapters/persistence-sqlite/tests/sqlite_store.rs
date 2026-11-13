@@ -8,9 +8,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
 use rust_decimal_macros::dec;
-use tickforge_adapter_sqlite::{SqliteOrderJournal, SqliteStore, SqliteWatchlistRepository};
+use tickforge_adapter_sqlite::{
+    SqliteBarRepository, SqliteOrderJournal, SqliteStore, SqliteWatchlistRepository,
+};
 use tickforge_application::ports::{
-    JournalEntry, OrderJournal, ReconcileOutcome, WatchlistRepository,
+    BarRepository, JournalEntry, OrderJournal, ReconcileOutcome, WatchlistRepository,
 };
 use tickforge_domain::shared::{Price, Quantity, Symbol};
 use tickforge_domain::trading::{
@@ -259,6 +261,99 @@ async fn intents_are_counted_from_a_point_in_time_and_survive_reopening() {
     let journal = SqliteOrderJournal::new(reopened.clone());
     assert_eq!(journal.count_intents_since(at(1_000)).await.unwrap(), 3);
     reopened.close().await;
+    if let Some(directory) = path.parent() {
+        let _ = std::fs::remove_dir_all(directory);
+    }
+}
+
+fn minute_bar(
+    symbol: &str,
+    seconds: i64,
+    close: rust_decimal::Decimal,
+) -> tickforge_domain::market::Bar {
+    let price = Price::new(close).unwrap();
+    tickforge_domain::market::Bar::new(
+        Symbol::new(symbol).unwrap(),
+        tickforge_domain::market::Timeframe::Minute1,
+        at(seconds),
+        tickforge_domain::market::Ohlc {
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+        },
+        Quantity::new(dec!(1250)).unwrap(),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn bars_are_upserted_and_the_latest_start_is_known_per_symbol() {
+    use tickforge_domain::market::Timeframe;
+
+    let store = SqliteStore::in_memory_market_data().await.unwrap();
+    let bars = SqliteBarRepository::new(store);
+    let aapl = Symbol::new("AAPL").unwrap();
+
+    assert_eq!(
+        bars.latest_bar_start(&aapl, Timeframe::Minute1)
+            .await
+            .unwrap(),
+        None
+    );
+    bars.save_bars(&[
+        minute_bar("AAPL", 60, dec!(180.25)),
+        minute_bar("AAPL", 120, dec!(180.50)),
+        minute_bar("MSFT", 600, dec!(410)),
+    ])
+    .await
+    .unwrap();
+    // Repetir una vela la reemplaza (no falla ni duplica)
+    bars.save_bars(&[minute_bar("AAPL", 120, dec!(181))])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        bars.latest_bar_start(&aapl, Timeframe::Minute1)
+            .await
+            .unwrap(),
+        Some(at(120))
+    );
+    assert_eq!(
+        bars.latest_bar_start(&aapl, Timeframe::Day1).await.unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn the_market_database_survives_reopening_and_is_never_mixed_with_trading() {
+    use tickforge_domain::market::Timeframe;
+
+    let path = temp_database().with_file_name("market.db");
+    let store = SqliteStore::open_market_data(&path).await.unwrap();
+    SqliteBarRepository::new(store.clone())
+        .save_bars(&[minute_bar("AAPL", 60, dec!(180))])
+        .await
+        .unwrap();
+    store.close().await;
+
+    let reopened = SqliteStore::open_market_data(&path).await.unwrap();
+    assert_eq!(
+        SqliteBarRepository::new(reopened.clone())
+            .latest_bar_start(&Symbol::new("AAPL").unwrap(), Timeframe::Minute1)
+            .await
+            .unwrap(),
+        Some(at(60))
+    );
+    reopened.close().await;
+
+    // La base de mercado no se puede abrir como base de trading, ni al revés
+    assert!(SqliteStore::open(&path).await.is_err());
+    let trading_path = path.with_file_name("tickforge.db");
+    let trading = SqliteStore::open(&trading_path).await.unwrap();
+    trading.close().await;
+    assert!(SqliteStore::open_market_data(&trading_path).await.is_err());
+
     if let Some(directory) = path.parent() {
         let _ = std::fs::remove_dir_all(directory);
     }

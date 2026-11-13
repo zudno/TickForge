@@ -3,6 +3,7 @@
 //! Cada adaptador (Alpaca, IBKR, SQLite, simulador en memoria, ONNX) implementa uno o más
 //! de estos traits. Los casos de uso solo conocen los traits, nunca las implementaciones.
 
+mod bar_repository;
 mod broker_gateway;
 mod client_order_id_generator;
 mod clock;
@@ -12,6 +13,7 @@ mod market_data_feed;
 mod order_journal;
 mod watchlist_repository;
 
+pub use bar_repository::BarRepository;
 pub use broker_gateway::{BrokerError, BrokerGateway, OrderUpdate, OrderUpdateKind};
 pub use client_order_id_generator::ClientOrderIdGenerator;
 pub use clock::Clock;

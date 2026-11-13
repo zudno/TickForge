@@ -3,6 +3,7 @@
 //! Este binario es el composition root: aquí, y solo aquí, se eligen las
 //! implementaciones concretas de cada puerto y se cablean con la TUI.
 
+mod backfill;
 mod bootstrap;
 mod cli;
 mod credentials;
@@ -24,6 +25,7 @@ async fn main() -> anyhow::Result<()> {
         CliCommand::Run { live } => live,
         CliCommand::SetLiveCredentials => return credentials::set_live_interactive(),
         CliCommand::DeleteLiveCredentials => return credentials::delete_live(),
+        CliCommand::Backfill { days, symbols } => return backfill::run(days, symbols).await,
         CliCommand::Help => {
             println!("{}", cli::USAGE);
             return Ok(());
@@ -52,8 +54,9 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("la interfaz de terminal terminó con un error");
 
-    // Cerrar la base aunque la TUI haya fallado, para que el diario quede completo en disco
+    // Cerrar las bases aunque la TUI haya fallado, para que el diario quede completo en disco
     application.store.close().await;
+    application.market_store.close().await;
     tracing::info!("TickForge cerrado");
     result
 }

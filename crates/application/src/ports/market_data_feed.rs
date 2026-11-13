@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use futures::stream::BoxStream;
 use thiserror::Error;
 use tickforge_domain::market::{Bar, Quote, Timeframe, TradeTick};
@@ -16,6 +17,16 @@ pub trait MarketDataFeed: Send + Sync {
         symbol: &Symbol,
         timeframe: Timeframe,
         limit: usize,
+    ) -> Result<Vec<Bar>, MarketDataError>;
+
+    /// Todas las velas cuyo inicio está en `[start, end)`, de la más antigua a la más
+    /// reciente. Recorre todas las páginas del proveedor: puede hacer varias peticiones.
+    async fn bars_between(
+        &self,
+        symbol: &Symbol,
+        timeframe: Timeframe,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
     ) -> Result<Vec<Bar>, MarketDataError>;
 
     /// Flujo en tiempo real de cotizaciones, operaciones y velas de los símbolos indicados.

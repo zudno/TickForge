@@ -463,6 +463,26 @@ impl MarketDataFeed for PaperBroker {
         Ok(bars.iter().skip(start).cloned().collect())
     }
 
+    async fn bars_between(
+        &self,
+        symbol: &Symbol,
+        timeframe: Timeframe,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<Bar>, MarketDataError> {
+        let state = lock(&self.state);
+        Ok(state
+            .bars
+            .get(&(symbol.clone(), timeframe))
+            .map(|bars| {
+                bars.iter()
+                    .filter(|bar| bar.starts_at() >= start && bar.starts_at() < end)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     async fn subscribe(
         &self,
         symbols: &[Symbol],

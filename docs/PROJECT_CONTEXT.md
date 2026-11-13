@@ -81,7 +81,7 @@ IEX Cloud cerró en 2024: no usar.
 | 6. Persistencia | Diario de órdenes, watchlists, reconciliación al iniciar | Auditoría y recuperación ✅ |
 | 7. Robustez | Reconexión con backoff, rate limits, idempotencia (`client_order_id`), apagado limpio, kill switch, panic hook | Listo para modo real ✅ |
 | 8. Modo real | 8a: triple llave, llaves en el keyring, base y límites propios, arranque bloqueado. 8b: TUI en real. 8c: pérdida diaria máxima y tope de órdenes | v1.0 |
-| 9. ML | Grabar datos → entrenar offline → exportar ONNX → modo sombra → asesor → (opcional) autónomo | Señales predictivas |
+| 9. ML | 9a grabar datos ✅ → 9b features → 9c entrenar offline y exportar ONNX → 9d inferencia en modo sombra → 9e asesor → (opcional) autónomo | Señales predictivas |
 
 ## 5. Alcance del MVP
 
@@ -395,7 +395,17 @@ pub trait SignalGenerator: Send + Sync {
 - [x] 8c. Pérdida máxima del día: la política bloquea órdenes nuevas y `DailyLossGuard` activa el kill switch solo (cancela lo abierto).
 - [x] 8c. Tope de órdenes por minuto y por día (ventanas móviles), contado en el diario.
 
-**Fase 8 completa.** Siguiente: fase 9 (ML).
+**Fase 8 completa.**
+
+### Fase 9 — Machine Learning
+
+- [x] 9a. Histórico de velas de 1 minuto en `data/market.db` (base aparte, compartida por ambos modos): la TUI guarda las velas del flujo en vivo y `tickforge data backfill` descarga el histórico de Alpaca de forma incremental.
+- [ ] 9b. Crate `ml-features` (Rust puro): las mismas features para entrenar y para inferir.
+- [ ] 9c. Entrenamiento offline en `ml/` (Python) y exportación a ONNX.
+- [ ] 9d. Inferencia en Rust (`ort`) en modo sombra: señales registradas, sin órdenes.
+- [ ] 9e. Modo asesor: señales visibles en la TUI.
+
+Siguiente: fase 9b.
 
 ## 9. Decisiones de modelado del dominio
 
@@ -582,3 +592,17 @@ pub trait SignalGenerator: Send + Sync {
 | Mercado fuera de horario | Regla del dominio: `RiskLimits::restrict_market_orders_to_open_market` (activa solo en real, no configurable) produce `RiskViolation::MarketOrderOutsideRegularHours` para órdenes a mercado si el mercado no está abierto **o no se pudo saber** (`RiskContext::market_open`). `PlaceOrderUseCase` consulta el reloj solo cuando la regla aplica. Las órdenes límite no se ven afectadas. Al estar en la política, también la cumplirá el futuro motor de ML. |
 | Pérdida máxima del día | `RiskLimits::with_max_daily_loss`; la pérdida es `last_equity - equity` (el P&L del día de la barra de cuenta). Regla única `RiskLimits::daily_loss_breach`, usada por la política (`RiskViolation::DailyLossLimitReached`, bloquea toda orden nueva) y por `DailyLossGuard`, que con cada cuenta cargada (cada 30 s y tras cada ejecución) activa el kill switch con el motivo "pérdida del día de X (máximo Y)" y cancela las órdenes abiertas. Si ya está activo, no repite nada. Si se desactiva a mano con la pérdida aún superada, la siguiente revisión lo vuelve a activar. Por defecto: 50 USD en real y 1,000 USD en paper (`TICKFORGE_[LIVE_]MAX_DAILY_LOSS`). |
 | Tope de órdenes | `RiskLimits::with_order_rate_limits`: ventanas **móviles** de 60 s y 24 h (no el día calendario), sobre las intenciones del diario (`OrderJournal::count_intents_since`), así que sobrevive a reinicios. Cuentan los intentos de envío (también los que el broker rechazó), no las órdenes que bloqueó el riesgo. Si el diario no responde, la orden no sale. Por defecto: 5/min y 30/día en real; 30/min y 500/día en paper (`TICKFORGE_[LIVE_]MAX_ORDERS_PER_MINUTE` y `..._PER_DAY`). Protegen contra errores en bucle y contra un futuro modelo de ML desbocado. |
+
+## 18. Decisiones del histórico de mercado (fase 9a)
+
+| Concepto | Decisión |
+|---|---|
+| Dónde | `TICKFORGE_DATA_DIR/market.db`, una base SQLite **aparte** de la de trading y compartida por paper y real (el mercado es el mismo). Así el diario de órdenes no crece con millones de velas y Python la lee sin tocar datos de la cuenta. |
+| Esquema | Tabla `bars` (`symbol`, `timeframe`, `starts_at`, `open`, `high`, `low`, `close`, `volume`), clave primaria `(symbol, timeframe, starts_at)`, `WITHOUT ROWID`. Precios y volumen como TEXT (valor exacto); `starts_at` en RFC 3339 UTC con precisión fija. Migraciones propias (`migrations/market/`). |
+| Bases separadas | Cada esquema marca su archivo con `PRAGMA application_id` (trading 0, mercado `TFMD`): abrir una base con el esquema de la otra falla en lugar de mezclar tablas. |
+| Guardar | Idempotente (`ON CONFLICT ... DO UPDATE`): una vela repetida reemplaza a la anterior, sin duplicados. |
+| Flujo en vivo | `RecordMarketDataUseCase::record`: el bucle del flujo de mercado de la TUI guarda cada vela de 1 minuto en una tarea aparte (nunca retrasa la pantalla). Un fallo solo va al log. |
+| Histórico | `tickforge data backfill [--days N] [SÍMBOLO ...]` (por defecto 30 días de la watchlist guardada de paper). Usa siempre las llaves de **paper**. Es incremental: empieza en la última vela guardada, que se vuelve a pedir porque pudo quedar incompleta con el mercado abierto. `MarketDataFeed::bars_between` recorre todas las páginas de Alpaca (10,000 velas por página, tope de 500 páginas) y devuelve `[start, end)`. Un símbolo con error no detiene a los demás; el comando termina con error si alguno falló. |
+| Precios | Sin ajuste por splits ni dividendos (`adjustment=raw`), igual que el flujo en vivo. Para ventanas largas habrá que ajustarlos al construir features. Feed IEX: una fracción del volumen total del mercado. |
+| Verificado | Descarga real contra Alpaca: unas 1,200 velas por símbolo en 3 días, en unos 2.6 s; la segunda corrida solo baja lo nuevo. |
+

@@ -57,6 +57,8 @@ const LIVE_LIMITS: LimitDefaults = LimitDefaults {
 const DATABASE_FILE: &str = "tickforge.db";
 /// Subcarpeta de la base del modo real: diario, watchlist y kill switch propios.
 const LIVE_DATA_SUBDIR: &str = "live";
+/// Histórico de mercado (velas) para ML. Uno solo para ambos modos: el mercado es el mismo.
+const MARKET_DATABASE_FILE: &str = "market.db";
 
 pub struct Settings {
     pub mode: TradingMode,
@@ -66,6 +68,8 @@ pub struct Settings {
     /// Archivo SQLite con el diario de órdenes, la watchlist y el kill switch. Cada modo
     /// tiene el suyo.
     pub database_path: PathBuf,
+    /// Archivo SQLite con el histórico de velas (`market.db`), compartido por ambos modos.
+    pub market_database_path: PathBuf,
     pub risk_limits: RiskLimits,
 }
 
@@ -104,6 +108,7 @@ impl Settings {
             watchlist,
             data_feed,
             database_path: database_path(&data_dir, mode),
+            market_database_path: data_dir.join(MARKET_DATABASE_FILE),
             log_dir: optional("TICKFORGE_LOG_DIR")
                 .map_or_else(|| PathBuf::from("logs"), PathBuf::from),
             risk_limits,
