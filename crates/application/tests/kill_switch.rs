@@ -111,3 +111,54 @@ async fn engaging_with_nothing_open_just_blocks() {
     assert!(report.canceled.is_empty());
     assert!(harness.kill_switch_repository.current().is_engaged());
 }
+
+#[tokio::test]
+async fn holding_blocks_new_orders_without_canceling_open_ones() {
+    let harness = Harness::new();
+    harness.quote(dec!(99.99), dec!(100));
+    let resting = harness
+        .place_order
+        .execute(command(OrderSide::Buy, limit(dec!(99)), dec!(1)))
+        .await
+        .unwrap();
+
+    let held = harness
+        .kill_switch
+        .hold("inicio de sesión en modo real")
+        .await
+        .unwrap();
+
+    assert!(held.is_engaged());
+    assert!(harness.kill_switch_repository.current().is_engaged());
+    // La orden abierta sigue intacta
+    let current = harness.broker.order(resting.id()).await.unwrap().unwrap();
+    assert!(current.status().is_cancelable());
+    assert_eq!(harness.broker.open_orders().await.unwrap().len(), 1);
+    // Y las nuevas quedan bloqueadas
+    let preview = harness
+        .place_order
+        .preview(command(OrderSide::Buy, OrderType::Market, dec!(1)))
+        .await
+        .unwrap();
+    assert!(
+        preview
+            .assessment
+            .violations()
+            .iter()
+            .any(|v| matches!(v, RiskViolation::KillSwitchEngaged { .. }))
+    );
+}
+
+#[tokio::test]
+async fn holding_keeps_an_existing_lock_untouched() {
+    let harness = Harness::new();
+    harness.kill_switch.engage("pánico de ayer").await.unwrap();
+    let before = harness.kill_switch_repository.current();
+    let entries_before = harness.journal.entries().len();
+
+    let held = harness.kill_switch.hold("inicio de sesión").await.unwrap();
+
+    assert_eq!(held, before);
+    assert_eq!(harness.kill_switch_repository.current(), before);
+    assert_eq!(harness.journal.entries().len(), entries_before);
+}

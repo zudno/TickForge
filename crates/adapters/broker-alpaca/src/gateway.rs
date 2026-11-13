@@ -37,6 +37,7 @@ pub struct AlpacaBrokerGateway {
 
 impl AlpacaBrokerGateway {
     pub fn new(config: &AlpacaConfig) -> Result<Self, AlpacaSetupError> {
+        config.validate()?;
         Ok(Self {
             http: AlpacaHttp::new(
                 &config.trading_base_url,

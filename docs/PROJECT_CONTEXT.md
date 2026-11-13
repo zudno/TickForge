@@ -12,8 +12,9 @@ o cancelar órdenes desde el teclado. La arquitectura debe permitir integrar en 
 
 Principios no negociables:
 
-- Todo se desarrolla y prueba primero en **paper trading**. El modo real (LIVE) requiere una
-  bandera explícita, confirmación doble y un banner rojo permanente en la interfaz.
+- Todo se desarrolla y prueba primero en **paper trading**. El modo real (LIVE) requiere tres
+  llaves (`TICKFORGE_MODE=live`, `--live` y escribir una frase), llaves guardadas en el almacén de
+  credenciales del sistema, límites propios y un banner rojo permanente en la interfaz.
 - **Nunca `f64` para dinero, precios ni cantidades**: se usa `rust_decimal::Decimal`.
 - Toda orden, venga del usuario o de un modelo, pasa por la **misma política de riesgo**.
 - El modelo **propone**, la política de riesgo **decide**. Un modelo nunca llama al broker.
@@ -79,7 +80,7 @@ IEX Cloud cerró en 2024: no usar.
 | 5. Órdenes | Ticket, vista previa, modal de confirmación, riesgo pre-trade, cancelación | Comprar/vender en paper ✅ |
 | 6. Persistencia | Diario de órdenes, watchlists, reconciliación al iniciar | Auditoría y recuperación ✅ |
 | 7. Robustez | Reconexión con backoff, rate limits, idempotencia (`client_order_id`), apagado limpio, kill switch, panic hook | Listo para modo real ✅ |
-| 8. Modo real | Bandera explícita + doble confirmación + banner LIVE | v1.0 |
+| 8. Modo real | 8a: triple llave, llaves en el keyring, base y límites propios, arranque bloqueado. 8b: TUI en real. 8c: pérdida diaria máxima y tope de órdenes | v1.0 |
 | 9. ML | Grabar datos → entrenar offline → exportar ONNX → modo sombra → asesor → (opcional) autónomo | Señales predictivas |
 
 ## 5. Alcance del MVP
@@ -376,7 +377,20 @@ pub trait SignalGenerator: Send + Sync {
 - [x] Detección de flujo congelado: 2 minutos sin datos con el mercado abierto fuerza la reconexión.
 - [x] Kill switch (`!`): bloquea toda orden nueva desde la política de riesgo y cancela las abiertas; persistido en SQLite.
 
-**Fase 7 completa.** Siguiente: fase 8, modo real (LIVE).
+**Fase 7 completa.**
+
+### Fase 8 — Modo real (LIVE)
+
+- [x] 8a. Triple llave: `TICKFORGE_MODE=live` + `--live` + escribir `OPERAR EN REAL` en la consola.
+- [x] 8a. Llaves reales solo en el almacén de credenciales del sistema (`tickforge credentials set-live`).
+- [x] 8a. Validación del adaptador: URLs de la cuenta real exigen `LiveTradingAuthorization`; entorno, URLs y prefijo de llaves deben coincidir.
+- [x] 8a. Base de datos propia (`data/live/tickforge.db`) y límites de riesgo propios (`TICKFORGE_LIVE_*`).
+- [x] 8a. Cada sesión en real arranca con las órdenes nuevas bloqueadas (sin cancelar las abiertas).
+- [x] 8a. Prueba de arquitectura: el acceso real solo puede construirse en el composition root.
+- [ ] 8b. TUI en real: pantalla de entrada con cuenta y equity, bordes rojos, segunda confirmación por orden, órdenes a mercado solo en horario regular.
+- [ ] 8c. Pérdida máxima diaria (activa el kill switch sola) y tope de órdenes por minuto y por día.
+
+Siguiente: fase 8b.
 
 ## 9. Decisiones de modelado del dominio
 
@@ -481,7 +495,7 @@ pub trait SignalGenerator: Send + Sync {
 | Refrescos | Portafolio cada 30 s; reloj de mercado cada 60 s y justo después de abrir o cerrar la sesión. `r` refresca y reconecta el flujo si está caído. |
 | Un solo flujo de datos | `CommandExecutor` mantiene una sola tarea de mercado y aborta la anterior al reconectar (límite de una conexión del plan gratuito). |
 | Watchlist | Foto inicial (`latest_quote` + 2 velas diarias para el cierre anterior y el cambio %) y luego datos en vivo. Configurable con `TICKFORGE_WATCHLIST`. |
-| Modo visible | Insignia `PAPER` (amarilla) o `LIVE` (roja) siempre en la barra de estado; `TICKFORGE_MODE=live` se rechaza al arrancar en esta versión. |
+| Modo visible | Insignia `PAPER` (amarilla) o `LIVE` (roja) siempre en la barra de estado; en modo real todo además pasa por las salvaguardas de la sección 17. |
 | Teclas | `j/k` o flechas, `r`, `?`, `Esc`, `q` y `Ctrl+C`. Solo se procesan eventos de **presionar**: Windows también envía los de soltar. |
 | Formato | El formato `{:.N}` de `Decimal` **trunca**; siempre se redondea antes (`format.rs`). Hora siempre en Nueva York (`ET`). |
 | Terminal | `ratatui::try_init`/`try_restore`, que restauran la terminal incluso ante un pánico. Logs a `logs/tickforge.log.AAAA-MM-DD`, nunca a la pantalla. |
@@ -544,3 +558,17 @@ pub trait SignalGenerator: Send + Sync {
 | Diario | Entradas `kill_switch_engaged` (con motivo) y `kill_switch_released`. |
 | TUI | `!` abre la confirmación (activar o desactivar según el estado); solo `Enter`/`Esc`. Activo: marco de la cuenta en rojo con aviso, insignia `⛔ DETENIDO` en la barra de estado y `b`/`s` explican el bloqueo en lugar de abrir el ticket. |
 | Prueba de humo | `paper_kill_switch_smoke` (escribe en paper) se **niega a correr si la cuenta tiene órdenes abiertas**: el kill switch las cancelaría todas, incluidas las del usuario. |
+
+## 17. Decisiones del modo real (LIVE)
+
+| Concepto | Decisión |
+|---|---|
+| Triple llave | Se necesitan las tres: `TICKFORGE_MODE=live` en `.env`, el parámetro `--live` y escribir `OPERAR EN REAL` en la consola antes de que se abra la TUI. Si solo hay una de las dos primeras, TickForge no arranca en **ningún** modo (la discrepancia indica un error, no se cae a paper en silencio). Cualquier otra respuesta a la frase cancela. |
+| Autorización en el tipo | `LiveTradingAuthorization` (adaptador de Alpaca) solo se obtiene con la frase exacta y no es `Clone`. `AlpacaConfig::live` la exige; `AlpacaConfig` tiene un campo privado, así que no se puede armar con un literal fuera del crate. |
+| Validación del adaptador | `AlpacaBrokerGateway::new` y `AlpacaMarketData::new` validan la configuración: una URL de `api.alpaca.markets` sin autorización se rechaza (aunque se cambie el campo `environment` a mano); el entorno debe coincidir con las URLs; llaves `PK…` en real o `AK…` en paper se rechazan. Alpaca describe esos prefijos como pistas visuales, por eso solo se usan para **rechazar**, nunca para aprobar. |
+| Llaves reales | Solo en el almacén de credenciales del sistema (crate `keyring`; en Windows, el Administrador de credenciales), servicio `tickforge`. `tickforge credentials set-live` las pide sin mostrarlas; `delete-live` las borra. Nunca se leen de `.env` ni de variables de entorno. Las de paper siguen en `.env`. |
+| Base de datos | Paper: `data/tickforge.db` (ruta histórica). Real: `data/live/tickforge.db`. Diario, watchlist y kill switch nunca se cruzan entre cuentas. |
+| Límites de riesgo | Independientes de paper, con variables `TICKFORGE_LIVE_*`. Por defecto: 250 USD por orden, 1,000 USD por posición, 3 % de desviación máxima del límite y cotizaciones de máximo 10 s. |
+| Arranque bloqueado | Cada sesión real ejecuta `KillSwitchUseCase::hold`: bloquea las órdenes nuevas **sin cancelar** las abiertas (motivo "inicio de sesión en modo real"). Si ya estaba activo, conserva el motivo original. La persona revisa la cuenta y desbloquea con `!`. |
+| Pruebas | Ninguna prueba toca la cuenta real. `no_live_access_in_tests` recorre todo el workspace y falla si la autorización, `AlpacaConfig::live` o el entorno `Live` aparecen fuera de `apps/trader-tui/src` y de los archivos del adaptador que los definen; también verifica que `main` pida la frase antes de construir la configuración real. |
+| Pendiente (8b, 8c) | Pantalla de entrada con la cuenta, bordes rojos y segunda confirmación por orden; órdenes a mercado solo en horario regular; pérdida máxima diaria con kill switch automático; tope de órdenes por minuto y por día. |

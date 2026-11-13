@@ -63,6 +63,11 @@ tracing-appender = "0.2"
 
 # Composition root
 anyhow = "1"
+# Llaves de la cuenta real en el almacén de credenciales del sistema (Windows: Administrador
+# de credenciales). En otros sistemas, sin feature nativa, queda el almacén simulado del crate
+keyring = { version = "3.6", features = ["windows-native"] }
+# Lectura de secretos en la consola sin mostrarlos
+rpassword = "7.5"
 
 # Pruebas
 rust_decimal_macros = "1"
