@@ -36,6 +36,21 @@ pub fn ask(settings: &Settings) -> anyhow::Result<LiveTradingAuthorization> {
         "  Límite por posición: {} USD",
         limits.max_position_notional().amount()
     )?;
+    if let Some(max_daily_loss) = limits.max_daily_loss() {
+        writeln!(
+            out,
+            "  Pérdida máxima del día: {} USD (al alcanzarla, el kill switch se activa solo)",
+            max_daily_loss.amount()
+        )?;
+    }
+    if let (Some(per_minute), Some(per_day)) =
+        (limits.max_orders_per_minute(), limits.max_orders_per_day())
+    {
+        writeln!(
+            out,
+            "  Tope de órdenes:     {per_minute} por minuto, {per_day} por día"
+        )?;
+    }
     writeln!(
         out,
         "  Base de datos:       {}",

@@ -391,9 +391,10 @@ pub trait SignalGenerator: Send + Sync {
 - [x] 8b. Bordes rojos en todos los paneles e insignia `LIVE · DINERO REAL` en la barra de estado, la cuenta y cada confirmación.
 - [x] 8b. Segunda confirmación por orden en real: escribir el símbolo exacto después de la vista previa.
 - [x] 8b. Órdenes a mercado solo con el mercado abierto en real, como regla de la política de riesgo.
-- [ ] 8c. Pérdida máxima diaria (activa el kill switch sola) y tope de órdenes por minuto y por día.
+- [x] 8c. Pérdida máxima del día: la política bloquea órdenes nuevas y `DailyLossGuard` activa el kill switch solo (cancela lo abierto).
+- [x] 8c. Tope de órdenes por minuto y por día (ventanas móviles), contado en el diario.
 
-Siguiente: fase 8c.
+**Fase 8 completa.** Siguiente: fase 9 (ML).
 
 ## 9. Decisiones de modelado del dominio
 
@@ -578,4 +579,5 @@ Siguiente: fase 8c.
 | Marcas visuales | En real: bordes rojos en todos los paneles sin foco (`theme::panel_border`), insignia `LIVE · DINERO REAL` en la barra de estado, el marco de la cuenta y los títulos de la vista previa y la cancelación; la vista previa empieza con `⚠ DINERO REAL · cuenta ••••7890`. |
 | Segunda confirmación | En real, el primer `Enter` sobre una vista previa aprobada no envía: pide escribir el símbolo (`PreviewOverlay::typed_symbol`). Solo el símbolo exacto envía; otro texto muestra el error. `Esc` vuelve a la vista previa y otro `Esc` al ticket. En paper sigue siendo un solo `Enter`. |
 | Mercado fuera de horario | Regla del dominio: `RiskLimits::restrict_market_orders_to_open_market` (activa solo en real, no configurable) produce `RiskViolation::MarketOrderOutsideRegularHours` para órdenes a mercado si el mercado no está abierto **o no se pudo saber** (`RiskContext::market_open`). `PlaceOrderUseCase` consulta el reloj solo cuando la regla aplica. Las órdenes límite no se ven afectadas. Al estar en la política, también la cumplirá el futuro motor de ML. |
-| Pendiente (8c) | Pérdida máxima diaria con kill switch automático; tope de órdenes por minuto y por día. |
+| Pérdida máxima del día | `RiskLimits::with_max_daily_loss`; la pérdida es `last_equity - equity` (el P&L del día de la barra de cuenta). Regla única `RiskLimits::daily_loss_breach`, usada por la política (`RiskViolation::DailyLossLimitReached`, bloquea toda orden nueva) y por `DailyLossGuard`, que con cada cuenta cargada (cada 30 s y tras cada ejecución) activa el kill switch con el motivo "pérdida del día de X (máximo Y)" y cancela las órdenes abiertas. Si ya está activo, no repite nada. Si se desactiva a mano con la pérdida aún superada, la siguiente revisión lo vuelve a activar. Por defecto: 50 USD en real y 1,000 USD en paper (`TICKFORGE_[LIVE_]MAX_DAILY_LOSS`). |
+| Tope de órdenes | `RiskLimits::with_order_rate_limits`: ventanas **móviles** de 60 s y 24 h (no el día calendario), sobre las intenciones del diario (`OrderJournal::count_intents_since`), así que sobrevive a reinicios. Cuentan los intentos de envío (también los que el broker rechazó), no las órdenes que bloqueó el riesgo. Si el diario no responde, la orden no sale. Por defecto: 5/min y 30/día en real; 30/min y 500/día en paper (`TICKFORGE_[LIVE_]MAX_ORDERS_PER_MINUTE` y `..._PER_DAY`). Protegen contra errores en bucle y contra un futuro modelo de ML desbocado. |

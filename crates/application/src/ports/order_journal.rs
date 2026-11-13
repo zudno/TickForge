@@ -16,6 +16,11 @@ pub trait OrderJournal: Send + Sync {
     /// `ClientOrderId`. Incluye las que tienen `SubmissionFailed`, porque un error de red
     /// puede ocurrir **después** de que el broker recibió la orden.
     async fn pending_intents(&self) -> Result<Vec<OrderRequest>, JournalError>;
+
+    /// Cantidad de intenciones (intentos de envío) registradas desde `since`, inclusive.
+    /// Alimenta el tope de órdenes por minuto y por día; se cuenta del diario para que
+    /// sobreviva a reiniciar la aplicación.
+    async fn count_intents_since(&self, since: DateTime<Utc>) -> Result<u32, JournalError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

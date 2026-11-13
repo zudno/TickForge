@@ -166,6 +166,13 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
             state: kill_switch,
             report,
         } => {
+            // El motivo dice si fue manual o automático (por ejemplo, la pérdida del día)
+            let reason = match &kill_switch {
+                tickforge_domain::risk::KillSwitch::Engaged { reason, .. } => {
+                    format!(" ({reason})")
+                }
+                tickforge_domain::risk::KillSwitch::Released => String::new(),
+            };
             state.kill_switch = kill_switch;
             if matches!(state.overlay, Overlay::KillSwitch(_)) {
                 state.overlay = Overlay::None;
@@ -174,7 +181,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
                 (
                     NotificationLevel::Warning,
                     format!(
-                        "KILL SWITCH ACTIVO: {} órdenes canceladas, órdenes nuevas bloqueadas",
+                        "KILL SWITCH ACTIVO{reason}: {} órdenes canceladas, órdenes nuevas \
+                         bloqueadas",
                         report.canceled.len()
                     ),
                 )
@@ -182,8 +190,8 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
                 (
                     NotificationLevel::Error,
                     format!(
-                        "KILL SWITCH ACTIVO, pero {} órdenes no se pudieron cancelar ({} sí). \
-                         Revisa el panel de órdenes y pulsa ! de nuevo para reintentar",
+                        "KILL SWITCH ACTIVO{reason}, pero {} órdenes no se pudieron cancelar \
+                         ({} sí). Revisa el panel de órdenes y pulsa ! de nuevo para reintentar",
                         report.failed.len(),
                         report.canceled.len()
                     ),
@@ -203,6 +211,11 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
                 "Kill switch desactivado: se permiten órdenes nuevas",
             );
         }
+        Action::DailyLossCheckFailed(reason) => state.notifications.push(
+            now,
+            NotificationLevel::Error,
+            format!("No se pudo verificar la pérdida del día: {reason}"),
+        ),
         Action::KillSwitchFailed(reason) => {
             if let Overlay::KillSwitch(dialog) = &mut state.overlay {
                 dialog.submitting = false;
@@ -260,10 +273,16 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Command> {
 
         // --- Cuenta y sesión ---
         Action::PortfolioLoaded(snapshot) => {
+            let account = snapshot.account.clone();
             state.portfolio = Some(snapshot);
             // La orden seleccionada pudo haberse cerrado
             let count = state.open_orders().len();
             state.selected_order = state.selected_order.min(count.saturating_sub(1));
+            // Con cada cuenta nueva se vigila la pérdida del día (si ya está detenido, no
+            // hay nada más que proteger)
+            if !state.kill_switch.is_engaged() {
+                return vec![Command::CheckDailyLoss(account)];
+            }
         }
         Action::PortfolioFailed(reason) => state.notifications.push(
             now,

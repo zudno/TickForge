@@ -11,9 +11,10 @@ use tickforge_application::use_cases::market::{
 };
 use tickforge_application::use_cases::portfolio::GetPortfolioSnapshotUseCase;
 use tickforge_application::use_cases::trading::{
-    CancelOrderUseCase, KillSwitchUseCase, PlaceOrderCommand, PlaceOrderUseCase,
+    CancelOrderUseCase, DailyLossGuard, KillSwitchUseCase, PlaceOrderCommand, PlaceOrderUseCase,
     ReconcileOrdersUseCase, WatchOrderUpdatesUseCase,
 };
+use tickforge_domain::portfolio::Account;
 use tickforge_domain::shared::Symbol;
 use tickforge_domain::trading::{OrderId, OrderRequest};
 use tokio::sync::mpsc::UnboundedSender;
@@ -37,6 +38,9 @@ pub enum Command {
     LoadKillSwitch,
     EngageKillSwitch,
     ReleaseKillSwitch,
+    /// Revisa la pérdida del día con la cuenta recién cargada; si alcanzó el máximo, el
+    /// kill switch se activa solo.
+    CheckDailyLoss(Account),
     AddSymbol {
         current: Vec<Symbol>,
         symbol: Symbol,
@@ -59,6 +63,7 @@ pub struct TuiServices {
     pub order_updates: Arc<WatchOrderUpdatesUseCase>,
     pub reconcile_orders: Arc<ReconcileOrdersUseCase>,
     pub kill_switch: Arc<KillSwitchUseCase>,
+    pub daily_loss_guard: Arc<DailyLossGuard>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -179,6 +184,29 @@ impl CommandExecutor {
                     }
                 });
             }
+            Command::CheckDailyLoss(account) => {
+                let guard = Arc::clone(&services.daily_loss_guard);
+                let kill_switch = Arc::clone(&services.kill_switch);
+                self.spawn_optional(async move {
+                    let report = match guard.check(&account).await {
+                        Ok(Some(report)) => report,
+                        Ok(None) => return None,
+                        Err(error) => {
+                            tracing::error!(%error, "no se pudo verificar la pérdida del día");
+                            return Some(Action::DailyLossCheckFailed(describe(&error)));
+                        }
+                    };
+                    tracing::warn!(
+                        canceled = report.canceled.len(),
+                        failed = report.failed.len(),
+                        "kill switch activado por la pérdida del día"
+                    );
+                    Some(match kill_switch.status().await {
+                        Ok(state) => Action::KillSwitchEngaged { state, report },
+                        Err(error) => Action::KillSwitchFailed(describe(&error)),
+                    })
+                });
+            }
             Command::ReleaseKillSwitch => {
                 let use_case = Arc::clone(&services.kill_switch);
                 self.spawn(async move {
@@ -252,10 +280,17 @@ impl CommandExecutor {
 
     /// Ejecuta una tarea que produce una sola acción.
     fn spawn(&self, task: impl Future<Output = Action> + Send + 'static) {
+        self.spawn_optional(async move { Some(task.await) });
+    }
+
+    /// Como `spawn`, para tareas que no siempre tienen algo que informar.
+    fn spawn_optional(&self, task: impl Future<Output = Option<Action>> + Send + 'static) {
         let actions = self.actions.clone();
         tokio::spawn(async move {
-            // Si el receptor ya no existe, la TUI se está cerrando
-            let _ = actions.send(task.await);
+            if let Some(action) = task.await {
+                // Si el receptor ya no existe, la TUI se está cerrando
+                let _ = actions.send(action);
+            }
         });
     }
 }

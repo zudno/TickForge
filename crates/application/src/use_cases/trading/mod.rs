@@ -1,6 +1,7 @@
 //! Casos de uso de trading: colocar y cancelar órdenes.
 
 mod cancel_order;
+mod daily_loss_guard;
 mod kill_switch;
 mod place_order;
 mod reconcile_orders;
@@ -16,6 +17,7 @@ use crate::ports::{
 };
 
 pub use cancel_order::CancelOrderUseCase;
+pub use daily_loss_guard::DailyLossGuard;
 pub use kill_switch::{KillSwitchReport, KillSwitchUseCase};
 pub use place_order::{OrderPreview, PlaceOrderCommand, PlaceOrderUseCase};
 pub use reconcile_orders::{ReconcileOrdersUseCase, ReconciliationReport};

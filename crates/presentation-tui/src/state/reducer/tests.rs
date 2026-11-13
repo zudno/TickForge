@@ -244,6 +244,7 @@ fn rejected_assessment() -> RiskAssessment {
             now: at(1_000),
             kill_switch: &tickforge_domain::risk::KillSwitch::Released,
             market_open: None,
+            order_activity: tickforge_domain::risk::OrderActivity::default(),
         })
         .unwrap();
     assert!(
@@ -728,7 +729,7 @@ fn engaging_asks_for_confirmation_then_reports_the_result() {
             .latest()
             .unwrap()
             .message
-            .starts_with("KILL SWITCH ACTIVO: 1 órdenes canceladas")
+            .starts_with("KILL SWITCH ACTIVO (activado desde la TUI): 1 órdenes canceladas")
     );
 }
 
@@ -913,4 +914,50 @@ fn a_blocked_live_preview_never_asks_for_the_symbol() {
 
     assert!(reduce(&mut state, Action::Confirm).is_empty());
     assert!(typed_symbol(&state).is_none());
+}
+
+// --- Pérdida del día ---
+
+#[test]
+fn every_loaded_account_is_checked_for_the_daily_loss() {
+    let mut state = state();
+    let snapshot = portfolio_with(Vec::new());
+    let account = snapshot.account.clone();
+
+    let commands = reduce(&mut state, Action::PortfolioLoaded(snapshot));
+    assert_eq!(commands, vec![Command::CheckDailyLoss(account)]);
+}
+
+#[test]
+fn an_engaged_kill_switch_skips_the_daily_loss_check() {
+    let mut state = state();
+    reduce(&mut state, Action::KillSwitchLoaded(engaged()));
+
+    let commands = reduce(
+        &mut state,
+        Action::PortfolioLoaded(portfolio_with(Vec::new())),
+    );
+    assert!(commands.is_empty());
+}
+
+#[test]
+fn an_automatic_kill_switch_announces_its_reason() {
+    let mut state = state();
+    reduce(
+        &mut state,
+        Action::KillSwitchEngaged {
+            state: tickforge_domain::risk::KillSwitch::engaged(
+                at(1_000),
+                "pérdida del día de 60.00 USD (máximo 50.00 USD)",
+            ),
+            report: tickforge_application::use_cases::trading::KillSwitchReport::default(),
+        },
+    );
+
+    let message = &state.notifications.latest().unwrap().message;
+    assert!(
+        message.contains("pérdida del día de 60.00 USD"),
+        "{message}"
+    );
+    assert!(state.kill_switch.is_engaged());
 }

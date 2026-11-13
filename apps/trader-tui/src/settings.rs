@@ -22,6 +22,10 @@ struct LimitDefaults {
     max_position_notional: &'static str,
     max_price_deviation_pct: &'static str,
     max_quote_age_secs: &'static str,
+    /// Al alcanzarla, el kill switch se activa solo.
+    max_daily_loss: &'static str,
+    max_orders_per_minute: &'static str,
+    max_orders_per_day: &'static str,
 }
 
 /// Paper: conservadores, pero con margen para practicar.
@@ -31,6 +35,9 @@ const PAPER_LIMITS: LimitDefaults = LimitDefaults {
     max_position_notional: "20000",
     max_price_deviation_pct: "5",
     max_quote_age_secs: "15",
+    max_daily_loss: "1000",
+    max_orders_per_minute: "30",
+    max_orders_per_day: "500",
 };
 
 /// Real: mucho más estrictos. Son independientes de los de paper: subir un límite de paper
@@ -41,6 +48,9 @@ const LIVE_LIMITS: LimitDefaults = LimitDefaults {
     max_position_notional: "1000",
     max_price_deviation_pct: "3",
     max_quote_age_secs: "10",
+    max_daily_loss: "50",
+    max_orders_per_minute: "5",
+    max_orders_per_day: "30",
 };
 
 /// Nombre del archivo de la base de datos dentro de `TICKFORGE_DATA_DIR`.
@@ -138,6 +148,16 @@ fn risk_limits(defaults: &LimitDefaults) -> anyhow::Result<RiskLimits> {
     let max_quote_age_secs: i64 = setting_or(&quote_age_name, defaults.max_quote_age_secs)
         .parse()
         .with_context(|| format!("{quote_age_name} debe ser un número entero de segundos"))?;
+    let max_daily_loss = Money::usd(decimal_setting(
+        &name("MAX_DAILY_LOSS"),
+        defaults.max_daily_loss,
+    )?);
+    let max_orders_per_minute = count_setting(
+        &name("MAX_ORDERS_PER_MINUTE"),
+        defaults.max_orders_per_minute,
+    )?;
+    let max_orders_per_day =
+        count_setting(&name("MAX_ORDERS_PER_DAY"), defaults.max_orders_per_day)?;
 
     RiskLimits::new(
         Money::usd(decimal_setting(
@@ -155,6 +175,8 @@ fn risk_limits(defaults: &LimitDefaults) -> anyhow::Result<RiskLimits> {
         TimeDelta::try_seconds(max_quote_age_secs)
             .with_context(|| format!("{quote_age_name} está fuera de rango"))?,
     )
+    .and_then(|limits| limits.with_max_daily_loss(max_daily_loss))
+    .and_then(|limits| limits.with_order_rate_limits(max_orders_per_minute, max_orders_per_day))
     .with_context(|| {
         format!(
             "los límites de riesgo ({}MAX_*) no son válidos",
@@ -165,6 +187,12 @@ fn risk_limits(defaults: &LimitDefaults) -> anyhow::Result<RiskLimits> {
 
 fn setting_or(name: &str, default: &str) -> String {
     optional(name).unwrap_or_else(|| default.to_owned())
+}
+
+fn count_setting(name: &str, default: &str) -> anyhow::Result<u32> {
+    let raw = setting_or(name, default);
+    raw.parse()
+        .with_context(|| format!("{name}='{raw}' debe ser un número entero positivo"))
 }
 
 fn decimal_setting(name: &str, default: &str) -> anyhow::Result<Decimal> {
@@ -261,6 +289,15 @@ mod tests {
         let paper_position = Decimal::from_str(PAPER_LIMITS.max_position_notional).unwrap();
         assert!(live.max_order_notional().amount() < paper_order);
         assert!(live.max_position_notional().amount() < paper_position);
+
+        // Pérdida diaria y topes de órdenes: siempre configurados, más estrictos en real
+        let paper = risk_limits(&PAPER_LIMITS).unwrap();
+        assert_eq!(live.max_daily_loss(), Some(Money::usd(Decimal::from(50))));
+        assert_eq!(live.max_orders_per_minute(), Some(5));
+        assert_eq!(live.max_orders_per_day(), Some(30));
+        assert!(live.max_daily_loss().unwrap().amount() < paper.max_daily_loss().unwrap().amount());
+        assert!(live.max_orders_per_minute() < paper.max_orders_per_minute());
+        assert!(live.max_orders_per_day() < paper.max_orders_per_day());
     }
 
     #[test]

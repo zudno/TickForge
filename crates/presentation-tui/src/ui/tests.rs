@@ -240,6 +240,7 @@ mod orders {
                 now: at("2024-03-01T15:00:00Z"),
                 kill_switch: &tickforge_domain::risk::KillSwitch::Released,
                 market_open: None,
+                order_activity: tickforge_domain::risk::OrderActivity::default(),
             })
             .unwrap()
     }

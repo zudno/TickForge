@@ -96,4 +96,6 @@ pub enum Action {
     },
     KillSwitchReleased,
     KillSwitchFailed(String),
+    /// No se pudo verificar la pérdida del día (la política igual bloquea órdenes nuevas).
+    DailyLossCheckFailed(String),
 }

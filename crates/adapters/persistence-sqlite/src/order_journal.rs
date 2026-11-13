@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use rusqlite::params;
 use tickforge_application::ports::{JournalEntry, JournalError, OrderJournal, ReconcileOutcome};
 use tickforge_domain::trading::OrderRequest;
@@ -216,5 +217,25 @@ impl OrderJournal for SqliteOrderJournal {
                 .map_err(JournalError::Corrupted)
             })
             .collect()
+    }
+
+    async fn count_intents_since(&self, since: DateTime<Utc>) -> Result<u32, JournalError> {
+        // Las fechas se guardan en RFC 3339, UTC y con precisión fija (ver `timestamp`), así
+        // que el orden de texto coincide con el orden cronológico
+        let since = timestamp(since);
+        let count: i64 = self
+            .store
+            .with_connection(move |connection| {
+                connection.query_row(
+                    "SELECT COUNT(*) FROM order_journal \
+                     WHERE kind = 'intent' AND recorded_at >= ?1",
+                    params![since],
+                    |row| row.get(0),
+                )
+            })
+            .await
+            .map_err(|error| JournalError::Storage(error.to_string()))?;
+        u32::try_from(count)
+            .map_err(|_| JournalError::Corrupted(format!("conteo inválido: {count}")))
     }
 }
