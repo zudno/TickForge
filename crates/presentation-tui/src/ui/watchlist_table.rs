@@ -38,6 +38,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         .block(crate::ui::panel_block(
             " Watchlist ",
             state.focus == crate::state::Panel::Watchlist,
+            state.is_live(),
         ))
         .row_highlight_style(theme::selected_row())
         .column_spacing(1);

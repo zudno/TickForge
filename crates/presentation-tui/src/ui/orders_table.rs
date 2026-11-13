@@ -18,7 +18,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Some(_) => format!(" Órdenes abiertas ({}) ", orders.len()),
         None => " Órdenes abiertas ".to_owned(),
     };
-    let block = panel_block(title, focused);
+    let block = panel_block(title, focused, state.is_live());
 
     if state.portfolio.is_none() || orders.is_empty() {
         let message = if state.portfolio.is_none() {

@@ -40,6 +40,8 @@ pub struct Harness {
     pub watchlist: ManageWatchlistUseCase,
     pub kill_switch_repository: Arc<InMemoryKillSwitchRepository>,
     pub kill_switch: KillSwitchUseCase,
+    /// Puertos del arnés, para construir casos de uso con otros límites.
+    pub ports: TradingPorts,
 }
 
 impl Harness {
@@ -74,7 +76,7 @@ impl Harness {
             place_order: PlaceOrderUseCase::new(ports.clone(), RiskPolicy::new(limits)),
             cancel_order: CancelOrderUseCase::new(ports.clone()),
             reconcile_orders: ReconcileOrdersUseCase::new(ports.clone()),
-            kill_switch: KillSwitchUseCase::new(ports),
+            kill_switch: KillSwitchUseCase::new(ports.clone()),
             kill_switch_repository: kill_switch,
             watchlist: ManageWatchlistUseCase::new(watchlist_repository.clone(), broker.clone()),
             watchlist_repository,
@@ -83,6 +85,7 @@ impl Harness {
             broker,
             journal,
             events,
+            ports,
         }
     }
 

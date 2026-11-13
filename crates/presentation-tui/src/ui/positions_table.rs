@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Cell, Paragraph, Row, Table};
 use rust_decimal::Decimal;
 use tickforge_domain::portfolio::Position;
 
@@ -17,7 +17,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Some(snapshot) => format!(" Posiciones ({}) ", snapshot.positions.len()),
         None => " Posiciones ".to_owned(),
     };
-    let block = Block::bordered().title(Span::styled(title, theme::title()));
+    let block = crate::ui::panel_block(title, false, state.is_live());
 
     let positions = match &state.portfolio {
         None => {

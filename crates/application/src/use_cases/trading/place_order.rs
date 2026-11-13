@@ -43,6 +43,8 @@ struct RiskInputs {
     position: Option<Position>,
     quote: Quote,
     kill_switch: KillSwitch,
+    /// Solo se consulta si la política lo necesita (ver `market_open_if_required`).
+    market_open: Option<bool>,
     now: DateTime<Utc>,
 }
 
@@ -181,10 +183,10 @@ impl PlaceOrderUseCase {
         )?)
     }
 
-    /// Cuenta, posición, cotización y kill switch, consultados en paralelo.
+    /// Cuenta, posición, cotización, kill switch y (si hace falta) horario, en paralelo.
     async fn gather_inputs(&self, request: &OrderRequest) -> Result<RiskInputs, ApplicationError> {
         let ports = &self.ports;
-        let (account, position, quote, kill_switch) = futures::try_join!(
+        let (account, position, quote, kill_switch, market_open) = futures::try_join!(
             async { ports.broker.account().await.map_err(ApplicationError::from) },
             async {
                 ports
@@ -208,14 +210,36 @@ impl PlaceOrderUseCase {
                     .await
                     .map_err(ApplicationError::from)
             },
+            async { Ok(self.market_open_if_required(request).await) },
         )?;
         Ok(RiskInputs {
             account,
             position,
             quote,
             kill_switch,
+            market_open,
             now: ports.clock.now(),
         })
+    }
+
+    /// El horario solo importa para órdenes a mercado cuando los límites las restringen; así
+    /// no se gasta una petición en cada orden límite. Si el broker no responde, se devuelve
+    /// `None` y la política lo trata como mercado cerrado (la orden no sale).
+    async fn market_open_if_required(&self, request: &OrderRequest) -> Option<bool> {
+        let required = self
+            .risk_policy
+            .limits()
+            .market_orders_require_open_market()
+            && request.order_type().limit_price().is_none();
+        if !required {
+            return None;
+        }
+        self.ports
+            .broker
+            .market_clock()
+            .await
+            .ok()
+            .map(|clock| clock.is_open())
     }
 
     fn evaluate(
@@ -230,6 +254,7 @@ impl PlaceOrderUseCase {
             quote: &inputs.quote,
             now: inputs.now,
             kill_switch: &inputs.kill_switch,
+            market_open: inputs.market_open,
         })?)
     }
 }

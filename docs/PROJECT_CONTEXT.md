@@ -387,10 +387,13 @@ pub trait SignalGenerator: Send + Sync {
 - [x] 8a. Base de datos propia (`data/live/tickforge.db`) y límites de riesgo propios (`TICKFORGE_LIVE_*`).
 - [x] 8a. Cada sesión en real arranca con las órdenes nuevas bloqueadas (sin cancelar las abiertas).
 - [x] 8a. Prueba de arquitectura: el acceso real solo puede construirse en el composition root.
-- [ ] 8b. TUI en real: pantalla de entrada con cuenta y equity, bordes rojos, segunda confirmación por orden, órdenes a mercado solo en horario regular.
+- [x] 8b. Resumen de la cuenta real al abrir (número enmascarado, saldos, posiciones, órdenes, estado del bloqueo); no se puede saltar antes de que cargue.
+- [x] 8b. Bordes rojos en todos los paneles e insignia `LIVE · DINERO REAL` en la barra de estado, la cuenta y cada confirmación.
+- [x] 8b. Segunda confirmación por orden en real: escribir el símbolo exacto después de la vista previa.
+- [x] 8b. Órdenes a mercado solo con el mercado abierto en real, como regla de la política de riesgo.
 - [ ] 8c. Pérdida máxima diaria (activa el kill switch sola) y tope de órdenes por minuto y por día.
 
-Siguiente: fase 8b.
+Siguiente: fase 8c.
 
 ## 9. Decisiones de modelado del dominio
 
@@ -571,4 +574,8 @@ Siguiente: fase 8b.
 | Límites de riesgo | Independientes de paper, con variables `TICKFORGE_LIVE_*`. Por defecto: 250 USD por orden, 1,000 USD por posición, 3 % de desviación máxima del límite y cotizaciones de máximo 10 s. |
 | Arranque bloqueado | Cada sesión real ejecuta `KillSwitchUseCase::hold`: bloquea las órdenes nuevas **sin cancelar** las abiertas (motivo "inicio de sesión en modo real"). Si ya estaba activo, conserva el motivo original. La persona revisa la cuenta y desbloquea con `!`. |
 | Pruebas | Ninguna prueba toca la cuenta real. `no_live_access_in_tests` recorre todo el workspace y falla si la autorización, `AlpacaConfig::live` o el entorno `Live` aparecen fuera de `apps/trader-tui/src` y de los archivos del adaptador que los definen; también verifica que `main` pida la frase antes de construir la configuración real. |
-| Pendiente (8b, 8c) | Pantalla de entrada con la cuenta, bordes rojos y segunda confirmación por orden; órdenes a mercado solo en horario regular; pérdida máxima diaria con kill switch automático; tope de órdenes por minuto y por día. |
+| Resumen al iniciar | En real, `AppState` arranca con `Overlay::LiveSessionStart`: cuenta (`Alpaca ••••7890`, con `Account::number` que informa el broker), saldos, posiciones, órdenes abiertas y estado del kill switch. `Enter`/`Esc` no lo cierran hasta que la cuenta cargó; `q` siempre sale. |
+| Marcas visuales | En real: bordes rojos en todos los paneles sin foco (`theme::panel_border`), insignia `LIVE · DINERO REAL` en la barra de estado, el marco de la cuenta y los títulos de la vista previa y la cancelación; la vista previa empieza con `⚠ DINERO REAL · cuenta ••••7890`. |
+| Segunda confirmación | En real, el primer `Enter` sobre una vista previa aprobada no envía: pide escribir el símbolo (`PreviewOverlay::typed_symbol`). Solo el símbolo exacto envía; otro texto muestra el error. `Esc` vuelve a la vista previa y otro `Esc` al ticket. En paper sigue siendo un solo `Enter`. |
+| Mercado fuera de horario | Regla del dominio: `RiskLimits::restrict_market_orders_to_open_market` (activa solo en real, no configurable) produce `RiskViolation::MarketOrderOutsideRegularHours` para órdenes a mercado si el mercado no está abierto **o no se pudo saber** (`RiskContext::market_open`). `PlaceOrderUseCase` consulta el reloj solo cuando la regla aplica. Las órdenes límite no se ven afectadas. Al estar en la política, también la cumplirá el futuro motor de ML. |
+| Pendiente (8c) | Pérdida máxima diaria con kill switch automático; tope de órdenes por minuto y por día. |

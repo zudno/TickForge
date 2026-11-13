@@ -40,6 +40,7 @@ async fn account_sends_credentials_and_maps_balances() {
         .and(header("apca-api-secret-key", SECRET_KEY))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "904837e3-3b76-47ec-b432-046db621571b",
+            "account_number": "PA3EXAMPLE01",
             "status": "ACTIVE",
             "currency": "USD",
             "cash": "95000.50",
@@ -62,6 +63,7 @@ async fn account_sends_credentials_and_maps_balances() {
     assert_eq!(account.buying_power(), Money::usd(dec!(190001)));
     assert_eq!(account.day_pnl().unwrap(), Money::usd(dec!(1250.75)));
     assert!(!account.is_trading_blocked());
+    assert_eq!(account.number(), Some("PA3EXAMPLE01"));
 }
 
 #[tokio::test]

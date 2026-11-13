@@ -10,12 +10,22 @@ use crate::theme;
 
 /// Resumen de la cuenta: equity, efectivo, poder de compra y P&L del día.
 pub(super) fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+    let account_number = state
+        .portfolio
+        .as_ref()
+        .and_then(|snapshot| snapshot.account.number())
+        .map(|number| format!(" {}", format::masked_account(number)))
+        .unwrap_or_default();
     let mut block = Block::bordered()
+        .border_style(theme::panel_border(state.is_live(), false))
         .title(Span::styled(" TickForge ", theme::title()))
         .title(Span::styled(
-            format!(" {} ", state.broker_name),
+            format!(" {}{account_number} ", state.broker_name),
             theme::muted(),
         ));
+    if state.is_live() {
+        block = block.title(crate::ui::mode_title(true));
+    }
     // Con el kill switch activo, el marco de la cuenta se vuelve rojo y lo anuncia
     if state.kill_switch.is_engaged() {
         block = block

@@ -6,6 +6,7 @@ mod add_symbol;
 mod cancel_confirm;
 mod help_overlay;
 mod kill_switch_dialog;
+mod live_session_start;
 mod modal;
 mod order_preview;
 mod order_ticket;
@@ -16,7 +17,6 @@ mod watchlist_table;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::Style;
 use ratatui::text::Span;
 use ratatui::widgets::Block;
 
@@ -56,22 +56,23 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Overlay::Help => help_overlay::render(frame),
         Overlay::Ticket(ticket) => order_ticket::render(frame, ticket),
         Overlay::Preview(preview) => order_preview::render(frame, state, preview),
-        Overlay::CancelConfirm(confirmation) => cancel_confirm::render(frame, confirmation),
+        Overlay::CancelConfirm(confirmation) => cancel_confirm::render(frame, state, confirmation),
         Overlay::AddSymbol(input) => add_symbol::render(frame, input),
         Overlay::KillSwitch(dialog) => kill_switch_dialog::render(frame, state, dialog),
+        Overlay::LiveSessionStart => live_session_start::render(frame, state),
     }
 }
 
-/// Bloque de un panel; el borde se resalta cuando el panel tiene el foco.
-pub(crate) fn panel_block(title: impl Into<String>, focused: bool) -> Block<'static> {
-    let border = if focused {
-        Style::new().fg(theme::ACCENT)
-    } else {
-        Style::new()
-    };
+/// Bloque de un panel; el borde se resalta con el foco y es rojo en modo real.
+pub(crate) fn panel_block(title: impl Into<String>, focused: bool, live: bool) -> Block<'static> {
     Block::bordered()
-        .border_style(border)
+        .border_style(theme::panel_border(live, focused))
         .title(Span::styled(title.into(), theme::title()))
+}
+
+/// Insignia del modo para el título de una ventana.
+pub(crate) fn mode_title(live: bool) -> Span<'static> {
+    Span::styled(theme::mode_label(live), theme::mode_badge(live))
 }
 
 #[cfg(test)]

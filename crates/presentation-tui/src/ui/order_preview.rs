@@ -6,7 +6,7 @@ use tickforge_domain::trading::OrderSide;
 
 use crate::format;
 use crate::labels;
-use crate::state::{AppState, PreviewOverlay, TradingMode};
+use crate::state::{AppState, PreviewOverlay};
 use crate::theme;
 use crate::ui::modal;
 
@@ -25,7 +25,21 @@ pub(super) fn render(frame: &mut Frame, state: &AppState, overlay: &PreviewOverl
         OrderSide::Sell => "Monto estimado",
     };
 
-    let mut lines = vec![
+    let mut lines = Vec::new();
+    if state.is_live() {
+        let account = state
+            .portfolio
+            .as_ref()
+            .and_then(|snapshot| snapshot.account.number())
+            .map(|number| format!(" · cuenta {}", format::masked_account(number)))
+            .unwrap_or_default();
+        lines.push(Line::from(Span::styled(
+            format!("⚠ DINERO REAL{account}"),
+            theme::live_badge(),
+        )));
+        lines.push(Line::default());
+    }
+    lines.extend([
         Line::from(Span::styled(
             format!(
                 "{} {} {}",
@@ -67,7 +81,7 @@ pub(super) fn render(frame: &mut Frame, state: &AppState, overlay: &PreviewOverl
             ),
         ),
         Line::default(),
-    ];
+    ]);
 
     if preview.assessment.is_approved() {
         lines.push(Line::from(Span::styled(
@@ -101,14 +115,17 @@ pub(super) fn render(frame: &mut Frame, state: &AppState, overlay: &PreviewOverl
             Style::new().fg(theme::NEGATIVE),
         )));
     }
+    if let Some(input) = &overlay.typed_symbol {
+        lines.extend(typed_symbol_lines(request.symbol().as_str(), input));
+    }
 
     lines.push(Line::default());
-    lines.push(Line::from(Span::styled(hint(overlay), theme::muted())));
+    lines.push(Line::from(Span::styled(
+        hint(overlay, state.is_live()),
+        theme::muted(),
+    )));
 
-    let mode = match state.mode {
-        TradingMode::Paper => Span::styled(" PAPER ", theme::paper_badge()),
-        TradingMode::Live => Span::styled(" LIVE ", theme::live_badge()),
-    };
+    let mode = crate::ui::mode_title(state.is_live());
     let block = Block::bordered()
         .border_style(side_style)
         .title(Span::styled(
@@ -136,12 +153,43 @@ fn detail(label: &str, value: String) -> Line<'static> {
     ])
 }
 
-fn hint(overlay: &PreviewOverlay) -> &'static str {
+/// Segunda confirmación del modo real: escribir el símbolo.
+fn typed_symbol_lines(symbol: &str, input: &crate::state::SymbolInput) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::default(),
+        Line::from(vec![
+            Span::raw("Para enviar con dinero real, escribe "),
+            Span::styled(symbol.to_owned(), Style::new().add_modifier(Modifier::BOLD)),
+            Span::raw(":"),
+        ]),
+        Line::from(vec![
+            Span::styled("› ", theme::title()),
+            Span::styled(
+                input.text.clone(),
+                Style::new().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("_", theme::muted()),
+        ]),
+    ];
+    if let Some(error) = &input.error {
+        lines.push(Line::from(Span::styled(
+            format!("✕ {error}"),
+            Style::new().fg(theme::NEGATIVE),
+        )));
+    }
+    lines
+}
+
+fn hint(overlay: &PreviewOverlay, live: bool) -> &'static str {
     if overlay.submitting {
         "Enviando al broker…"
-    } else if overlay.preview.assessment.is_approved() {
-        "Enter enviar · Esc editar"
-    } else {
+    } else if !overlay.preview.assessment.is_approved() {
         "Esc para editar la orden"
+    } else if overlay.typed_symbol.is_some() {
+        "Enter enviar · Esc volver"
+    } else if live {
+        "Enter continuar · Esc editar"
+    } else {
+        "Enter enviar · Esc editar"
     }
 }

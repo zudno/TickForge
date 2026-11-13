@@ -36,6 +36,12 @@ pub enum RiskViolation {
     )]
     InsufficientPosition { requested: Quantity, held: Quantity },
 
+    #[error(
+        "las órdenes a mercado solo se aceptan con el mercado abierto (horario regular); \
+         usa una orden límite"
+    )]
+    MarketOrderOutsideRegularHours,
+
     #[error("el precio límite se desvía {deviation_pct}% del mercado (máximo {limit_pct}%)")]
     PriceDeviationExceeded {
         deviation_pct: Decimal,

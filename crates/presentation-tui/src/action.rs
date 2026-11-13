@@ -37,6 +37,9 @@ pub enum Action {
     RequestCancelSelected,
     /// `!`: abre la confirmación para activar o desactivar el kill switch.
     OpenKillSwitch,
+    /// Modo real: texto de la segunda confirmación (el símbolo de la orden).
+    ConfirmSymbolInput(char),
+    ConfirmSymbolBackspace,
 
     // --- Usuario: watchlist ---
     OpenAddSymbol,

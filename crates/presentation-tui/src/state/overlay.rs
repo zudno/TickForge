@@ -19,6 +19,8 @@ pub enum Overlay {
     KillSwitch(KillSwitchDialog),
     /// Captura de un símbolo para agregarlo a la watchlist.
     AddSymbol(SymbolInput),
+    /// Modo real: resumen de la cuenta al iniciar, antes de dejar operar.
+    LiveSessionStart,
 }
 
 /// Campo de texto para un símbolo nuevo (se normaliza a mayúsculas al escribir).
@@ -56,6 +58,9 @@ pub struct PreviewOverlay {
     /// Se envió la orden y se espera la respuesta del broker.
     pub submitting: bool,
     pub error: Option<String>,
+    /// Modo real: segunda confirmación, escribir el símbolo de la orden. `None` mientras no
+    /// se haya pedido (o en paper, donde no existe).
+    pub typed_symbol: Option<SymbolInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
